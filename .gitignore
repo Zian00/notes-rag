@@ -1,8 +1,10 @@
-# Vector database
-chroma_db/
+# Vector database (legacy)
+legacy/chroma_db/
 
 # Environment variables
 .env
+*.env
+!*.env.example
 
 # Python
 __pycache__/
@@ -11,11 +13,20 @@ __pycache__/
 *.pyd
 .Python
 *.so
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environment
+.venv/
 venv/
 env/
-.venv/
+
+# uv
+# (uv.lock IS committed; do not ignore it)
 
 # IDE
 .vscode/
+
+# OS
+.DS_Store
