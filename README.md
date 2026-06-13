@@ -1,224 +1,111 @@
-# 📚 Lecture Notes RAG
+# Notes RAG
 
-A Retrieval-Augmented Generation (RAG) application for querying and summarizing lecture notes using AI. Upload your lecture materials (PDF, TXT, MD) and ask questions or generate summaries.
+An agentic Retrieval-Augmented Generation application for lecture notes. The project is being rebuilt from a single-file Streamlit prototype into a production-grade full-stack system: a FastAPI + LangGraph backend with a React frontend, persistent storage in Postgres with pgvector, and structured agentic reasoning for retrieval and Q&A.
 
-## ✨ Features
+---
 
-- **📤 Multi-format Support**: Upload PDF, TXT, and Markdown files
-- **🔍 Smart Retrieval**: Semantic search across all uploaded notes
-- **📝 Lecture Summaries**: Generate comprehensive summaries of entire lectures
-- **💬 Q&A Mode**: Ask specific questions and get contextual answers
-- **🧠 Intent Detection**: Automatically switches between summary and Q&A modes
-- **💾 Persistent Storage**: Vector database stores embeddings locally
+## Roadmap
 
-## 📁 Project Structure
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 — Foundation | FastAPI app factory, async SQLAlchemy, Alembic, pgvector, CI | **Current** |
+| 1 — Auth | JWT authentication, user model, protected routes | Upcoming |
+| 2 — Ingestion + Retrieval | Document upload, chunking, embedding, vector search | Upcoming |
+| 3 — Agentic RAG / LangGraph | LangGraph agent, retrieval tools, LangGraph checkpoints in Postgres | Upcoming |
+| 4 — Frontend | React UI, chat interface, upload flow | Upcoming |
+| 5 — CI/CD + Polish | Docker image publishing, production config, observability | Upcoming |
 
-```
-notes-rag/
-├── app.py                 # Streamlit UI and main application logic
-├── core/
-│   ├── chains.py          # LLM chains for summary and Q&A
-│   ├── embeddings.py      # Vector database initialization
-│   ├── ingestion.py       # Document processing and chunking
-│   ├── intent.py          # Query intent classification
-│   └── retrieval.py       # Document retrieval strategies
-├── utils/
-│   └── parsing.py         # Lecture ID extraction
-├── data/                  # (Optional) Sample lecture files
-├── chroma_db/             # Vector database storage (gitignored)
-├── .env                   # Environment variables (gitignored)
-├── .gitignore
-├── requirements.txt       # Python dependencies
-└── README.md
-```
+Full foundation design spec: [`docs/superpowers/specs/2026-06-13-foundation-design.md`](docs/superpowers/specs/2026-06-13-foundation-design.md)
 
-## 🚀 Setup
+---
 
-### Prerequisites
-- Python 3.8+
-- Google API Key (for Gemini) or Ollama (for local LLM)
+## Tech Stack
 
-### Installation
+- **FastAPI** — async Python web framework
+- **SQLAlchemy (async)** — ORM with asyncpg driver
+- **Postgres + pgvector** — relational store and vector similarity search in one database
+- **Alembic** — database migration management
+- **uv** — Python environment and dependency management
+- **Docker + Docker Compose** — local development and full-stack runtime
+- **pytest / ruff / mypy** — testing, linting, static type-checking
 
-1. **Clone the repository**
-```bash
-git clone <your-repo-url>
-cd notes-rag
-```
+---
 
-2. **Create virtual environment**
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
+## Prerequisites
 
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [make](https://www.gnu.org/software/make/) (available via Git for Windows, Homebrew, or apt)
 
-4. **Configure environment variables**
-```bash
-# Create .env file with your API key
-GOOGLE_API_KEY=your_api_key_here
-```
+---
 
-### Run the App
+## Quickstart (local dev)
+
+Run the backend against a Dockerised Postgres database, with live reload:
 
 ```bash
-streamlit run app.py
+# 1. Copy the example environment file and fill in any values you need
+cp backend/.env.example backend/.env
+
+# 2. Start Postgres (host port 5433 to avoid conflicts with a local Postgres)
+make db
+
+# 3. Install Python dependencies into a uv-managed virtual environment
+cd backend && uv sync
+
+# 4. Apply database migrations
+make migrate
+
+# 5. Start the backend with live reload
+make dev
 ```
 
-Open your browser at `http://localhost:8501`
+Then open the interactive API docs at http://localhost:8000/docs.
 
-## 📖 Usage
+---
 
-### 1. Upload Lecture Notes
-- Click "Upload lecture notes" in the sidebar
-- Select PDF, TXT, or MD files
-- Name files with lecture identifiers (e.g., `lecture_3.pdf`, `tutorial_2.txt`)
-- Click "Process Files"
+## Run the Full Stack in Docker
 
-### 2. Ask Questions
+Build and start both Postgres and the backend together:
 
-**Summary Mode** (retrieves entire lecture):
-```
-"Summarize lecture 3"
-"Give me an overview of tutorial 5"
-"lecture 2"
+```bash
+make up
 ```
 
-**Q&A Mode** (semantic search):
-```
-"What is backpropagation?"
-"Explain gradient descent"
-"How do neural networks work?"
-```
+The API is available at http://localhost:8000/docs.
 
-### 3. Manage Database
-- View document count in sidebar
-- Clear database with "🗑️ Clear Database" button
+To stop and remove the containers:
 
-## 🔧 Configuration
-
-### Change LLM Provider
-
-**Option 1: Google Gemini (default)**
-```python
-# core/chains.py
-return ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0
-)
+```bash
+make down
 ```
 
-**Option 2: Ollama (local)**
-```python
-# core/chains.py
-return ChatOllama(
-    model="qwen2.5:3b",
-    temperature=0
-)
-```
+---
 
-### Adjust Chunking Strategy
-```python
-# core/ingestion.py
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=800,      # Characters per chunk
-    chunk_overlap=120    # Overlap between chunks
-)
-```
+## Dev Commands
 
-## 🧠 How It Works
+| Command | What it does |
+|---------|--------------|
+| `make check` | Run lint + type-check + tests in one shot |
+| `make test` | Run the pytest suite |
+| `make lint` | Ruff lint check |
+| `make format` | Ruff auto-format |
+| `make typecheck` | mypy static type-check |
+| `make migrate` | Apply all pending Alembic migrations |
+| `make revision m="message"` | Generate a new Alembic migration from model changes |
+| `make dev` | Start the backend with uvicorn live reload |
+| `make db` | Start only the Postgres container |
+| `make up` | Build and start the full Docker Compose stack |
+| `make down` | Stop and remove the Docker Compose stack |
 
-### Document Ingestion Flow
+---
 
-```
-User uploads file → ingest_files() → extract_lecture_id()
-                         ↓
-                  Load document (PyPDFLoader/text)
-                         ↓
-                  RecursiveCharacterTextSplitter
-                  (chunk_size=800, overlap=120)
-                         ↓
-                  Generate embeddings (all-MiniLM-L6-v2)
-                         ↓
-                  Store in ChromaDB with metadata
-                  {source: "lecture_3.pdf", lecture: "lecture_3"}
-```
+## Notes
 
-### Query Processing Flow
+The original Streamlit prototype is preserved under `legacy/` for reference. It is not part of the active development stack.
 
-**Path A: Summary Request** (e.g., "Summarize lecture 3")
-```
-User query → extract_lecture_id() → "lecture_3"
-                    ↓
-            is_summary_intent() → True
-                    ↓
-            retrieve_for_summary()
-            (fetch ALL chunks where lecture="lecture_3")
-                    ↓
-            run_summary_chain()
-            (concatenate all chunks + summary prompt)
-                    ↓
-            LLM generates comprehensive summary
-```
+---
 
-**Path B: Q&A Request** (e.g., "What is backpropagation?")
-```
-User query → extract_lecture_id() → None
-                    ↓
-            is_summary_intent() → False
-                    ↓
-            retrieve_for_qa()
-            (semantic search, top 3 chunks)
-                    ↓
-            run_qa()
-            (concatenate 3 chunks + Q&A prompt)
-                    ↓
-            LLM generates precise answer
-```
+## Learning
 
-### Key Differences
-
-| Aspect | Summary Mode | Q&A Mode |
-|--------|--------------|----------|
-| **Trigger** | Lecture ID + keywords/short query | No lecture ID or specific question |
-| **Retrieval** | ALL chunks from one lecture | Top 3 semantically similar chunks |
-| **Context** | Entire lecture (50+ chunks) | Only 3 most relevant chunks |
-| **Purpose** | Comprehensive overview | Precise answer |
-
-## 🔄 Example Scenarios
-
-**Scenario 1:** *"Give me an overview of tutorial 5"*
-- Extracts: `tutorial_5`
-- Intent: Summary (keyword "overview")
-- Retrieves: All chunks from tutorial_5
-- Output: Full summary
-
-**Scenario 2:** *"lecture 2"* (short query)
-- Extracts: `lecture_2`
-- Intent: Summary (≤12 words heuristic)
-- Retrieves: All chunks from lecture_2
-- Output: Full summary
-
-**Scenario 3:** *"How does gradient descent work?"*
-- Extracts: None
-- Intent: Q&A
-- Retrieves: 3 most relevant chunks via semantic search
-- Output: Focused answer from context
-
-## 📦 Tech Stack
-
-- **Streamlit**: Web UI framework
-- **LangChain**: LLM orchestration
-- **ChromaDB**: Vector database
-- **Sentence Transformers**: Text embeddings
-- **PyPDF**: PDF parsing
-- **Google Gemini**: LLM provider
-
-## 📝 License
-
-MIT License
+New to any of the patterns or libraries used here? See [`docs/learning/00-foundation.md`](docs/learning/00-foundation.md) for a beginner-friendly explainer covering the app factory, pydantic-settings, async SQLAlchemy, Alembic, pgvector, layered architecture, pytest fixtures, uv, and the Docker Compose port setup.

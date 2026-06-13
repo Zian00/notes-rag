@@ -2,14 +2,14 @@ import os
 from collections.abc import AsyncGenerator
 
 import pytest_asyncio
+from app.core.config import get_settings
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Use a dedicated test database URL if provided, else fall back to the dev DB.
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://notes:notes@localhost:5433/notes_rag",
-)
+# Single source of truth for the test DB: use TEST_DATABASE_URL when set
+# (e.g. CI publishes Postgres on 5432), otherwise the app's configured
+# DATABASE_URL (from .env). Avoids a hard-coded port drifting from real config.
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or get_settings().database_url
 
 
 @pytest_asyncio.fixture

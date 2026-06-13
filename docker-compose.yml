@@ -17,5 +17,19 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    build: ./backend
+    container_name: notes_rag_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notes:notes@postgres:5432/notes_rag
+      JWT_SECRET: dev-only-change-me
+      ENVIRONMENT: development
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+
 volumes:
   postgres_data:
