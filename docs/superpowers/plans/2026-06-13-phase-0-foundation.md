@@ -757,6 +757,9 @@ async def widget_table(db_session):
     async with engine.begin() as conn:
         await conn.run_sync(_Widget.__table__.create, checkfirst=True)
     yield
+    # Release any locks the test's session still holds (e.g. an open
+    # SELECT transaction) before dropping the table, or DROP deadlocks.
+    await db_session.rollback()
     async with engine.begin() as conn:
         await conn.run_sync(_Widget.__table__.drop, checkfirst=True)
 
