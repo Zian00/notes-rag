@@ -13,7 +13,7 @@ TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or get_settings().database_ur
 
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session() -> AsyncGenerator[AsyncSession]:
     engine = create_async_engine(TEST_DATABASE_URL, future=True)
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with maker() as session:
@@ -22,7 +22,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client() -> AsyncGenerator[AsyncClient]:
     from app.main import create_app
 
     app = create_app()

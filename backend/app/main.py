@@ -8,14 +8,14 @@ from fastapi.responses import RedirectResponse
 from app.api import health
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.db.session import engine
+from app.db.session import get_engine
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     configure_logging()
     yield
-    await engine.dispose()
+    await get_engine().dispose()
 
 
 def create_app() -> FastAPI:

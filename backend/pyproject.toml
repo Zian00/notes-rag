@@ -2,7 +2,7 @@
 name = "notes-rag-backend"
 version = "0.0.0"
 description = "Agentic RAG backend for lecture notes (FastAPI + LangGraph)"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -24,14 +24,14 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 src = ["app", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 disallow_untyped_defs = true
