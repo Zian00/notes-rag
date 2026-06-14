@@ -22,3 +22,16 @@ def test_settings_defaults(monkeypatch):
     settings = Settings()
 
     assert settings.cors_origins == ["http://localhost:5173"]
+
+
+def test_settings_auth_defaults(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5433/db")
+    monkeypatch.setenv("JWT_SECRET", "test-secret")
+
+    settings = Settings()
+
+    assert settings.jwt_algorithm == "HS256"
+    assert settings.access_token_expire_minutes == 15
+    assert settings.refresh_token_expire_days == 7
+    assert settings.cookie_secure is False
+    assert settings.cookie_samesite == "lax"

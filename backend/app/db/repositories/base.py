@@ -1,4 +1,4 @@
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,8 @@ class BaseRepository(Generic[ModelT]):  # noqa: UP046
         await self._session.flush()
         return instance
 
-    async def get(self, id_: int) -> ModelT | None:
+    async def get(self, id_: Any) -> ModelT | None:
+        """Fetch by primary key (int, UUID, etc.)."""
         return await self._session.get(self._model, id_)
 
     async def list(self) -> list[ModelT]:

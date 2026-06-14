@@ -1,6 +1,6 @@
 # Phase 0 — Foundation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 > **COMMIT POLICY (user override):** NEVER run `git commit` automatically. The "Commit" step in each task is a checkpoint — pause and let the user run/approve the commit. Prepare the staged change and show the suggested message, then wait.
 
@@ -52,13 +52,13 @@
 
 - [x] **Install uv** — DONE (`uv 0.11.21`).
 
-- [ ] **Install make** (not currently installed).
+- [x] **Install make** (not currently installed).
 
 Run: `winget install ezwinports.make`
 Then restart the shell and verify: `make --version`
 Expected: prints GNU Make version info.
 
-- [ ] **(Optional, user) Rotate `GOOGLE_API_KEY`** in Google Cloud Console. Not blocking Phase 0; the key is unused until Phase 3. New key goes only in the local gitignored `backend/.env`.
+- [x] **(Optional, user) Rotate `GOOGLE_API_KEY`** in Google Cloud Console. Not blocking Phase 0; the key is unused until Phase 3. New key goes only in the local gitignored `backend/.env`.
 
 ---
 
@@ -68,7 +68,7 @@ Expected: prints GNU Make version info.
 - Move: `app.py`, `core/`, `utils/`, `requirements.txt` → `legacy/`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Create `legacy/` and move the old app**
+- [x] **Step 1: Create `legacy/` and move the old app**
 
 Run (from repo root):
 ```bash
@@ -80,11 +80,11 @@ git mv requirements.txt legacy/requirements.txt
 ```
 (If `git mv` complains about untracked files, use plain `mv` instead.)
 
-- [ ] **Step 2: Move the existing chroma_db out of the way (it is gitignored, so plain move)**
+- [x] **Step 2: Move the existing chroma_db out of the way (it is gitignored, so plain move)**
 
 Run: `mv chroma_db legacy/chroma_db 2>/dev/null || echo "no chroma_db to move"`
 
-- [ ] **Step 3: Update `.gitignore`** — replace the whole file with:
+- [x] **Step 3: Update `.gitignore`** — replace the whole file with:
 
 ```gitignore
 # Vector database (legacy)
@@ -121,12 +121,12 @@ env/
 .DS_Store
 ```
 
-- [ ] **Step 4: Verify structure**
+- [x] **Step 4: Verify structure**
 
 Run: `ls legacy && echo "---" && ls`
 Expected: `legacy/` contains `app.py core utils requirements.txt`; repo root no longer has them.
 
-- [ ] **Step 5: Commit (await user approval)**
+- [x] **Step 5: Commit (await user approval)**
 
 ```bash
 git add -A
@@ -140,7 +140,7 @@ git commit -m "chore: move legacy Streamlit app to legacy/"
 **Files:**
 - Create: `backend/pyproject.toml`, `backend/app/__init__.py`, `backend/README.md` (stub), `backend/.python-version`
 
-- [ ] **Step 1: Create the backend package skeleton**
+- [x] **Step 1: Create the backend package skeleton**
 
 Run (from repo root):
 ```bash
@@ -148,7 +148,7 @@ mkdir -p backend/app/api backend/app/core backend/app/db/repositories backend/ap
 touch backend/app/__init__.py backend/app/api/__init__.py backend/app/core/__init__.py backend/app/db/__init__.py backend/app/db/repositories/__init__.py backend/app/services/__init__.py backend/app/schemas/__init__.py backend/tests/__init__.py
 ```
 
-- [ ] **Step 2: Create `backend/pyproject.toml`**
+- [x] **Step 2: Create `backend/pyproject.toml`**
 
 ```toml
 [project]
@@ -196,24 +196,24 @@ testpaths = ["tests"]
 addopts = "-v"
 ```
 
-- [ ] **Step 3: Pin the Python version**
+- [x] **Step 3: Pin the Python version**
 
 Create `backend/.python-version` containing exactly:
 ```
 3.13
 ```
 
-- [ ] **Step 4: Resolve and install dependencies**
+- [x] **Step 4: Resolve and install dependencies**
 
 Run (from `backend/`): `uv sync`
 Expected: creates `backend/.venv` and `backend/uv.lock`; installs all deps without error.
 
-- [ ] **Step 5: Verify the toolchain runs**
+- [x] **Step 5: Verify the toolchain runs**
 
 Run (from `backend/`): `uv run ruff --version && uv run mypy --version && uv run pytest --version`
 Expected: all three print versions.
 
-- [ ] **Step 6: Create the root `Makefile`** (repo root, NOT `backend/`). Make is tab-indented — recipe lines MUST start with a real TAB, not spaces.
+- [x] **Step 6: Create the root `Makefile`** (repo root, NOT `backend/`). Make is tab-indented — recipe lines MUST start with a real TAB, not spaces.
 
 ```makefile
 .PHONY: up down db dev test lint format typecheck migrate revision check
@@ -244,11 +244,11 @@ revision:    ## Create a migration: make revision m="message"
 check: lint typecheck test  ## Lint + type-check + test
 ```
 
-- [ ] **Step 7: Verify make works**
+- [x] **Step 7: Verify make works**
 
 Run (from repo root): `make --version` then `make lint` (expect ruff to run; it may report no files yet — that's fine).
 
-- [ ] **Step 8: Commit (await user approval)**
+- [x] **Step 8: Commit (await user approval)**
 
 ```bash
 git add backend/pyproject.toml backend/uv.lock backend/.python-version backend/app backend/tests Makefile
@@ -263,7 +263,7 @@ git commit -m "chore: initialize backend project with uv + Makefile"
 - Create: `backend/app/core/config.py`, `backend/.env.example`
 - Test: `backend/tests/test_config.py`
 
-- [ ] **Step 1: Write the failing test** — `backend/tests/test_config.py`
+- [x] **Step 1: Write the failing test** — `backend/tests/test_config.py`
 
 ```python
 from app.core.config import Settings
@@ -292,12 +292,12 @@ def test_settings_defaults(monkeypatch):
     assert settings.cors_origins == ["http://localhost:5173"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run (from `backend/`): `uv run pytest tests/test_config.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.config'`.
 
-- [ ] **Step 3: Implement `backend/app/core/config.py`**
+- [x] **Step 3: Implement `backend/app/core/config.py`**
 
 ```python
 from functools import lru_cache
@@ -336,12 +336,12 @@ def get_settings() -> Settings:
     return Settings()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run (from `backend/`): `uv run pytest tests/test_config.py -v`
 Expected: PASS (2 passed).
 
-- [ ] **Step 5: Create `backend/.env.example`**
+- [x] **Step 5: Create `backend/.env.example`**
 
 ```dotenv
 # Copy to backend/.env and fill in. NEVER commit the real .env.
@@ -353,11 +353,11 @@ ENVIRONMENT=development
 CORS_ORIGINS=["http://localhost:5173"]
 ```
 
-- [ ] **Step 6: Create local `backend/.env`** (gitignored) by copying the example so later tasks can run locally.
+- [x] **Step 6: Create local `backend/.env`** (gitignored) by copying the example so later tasks can run locally.
 
 Run (from `backend/`): `cp .env.example .env`
 
-- [ ] **Step 7: Commit (await user approval)**
+- [x] **Step 7: Commit (await user approval)**
 
 ```bash
 git add backend/app/core/config.py backend/tests/test_config.py backend/.env.example
@@ -372,7 +372,7 @@ git commit -m "feat: add typed Settings config"
 - Create: `backend/app/core/logging.py`
 - Test: `backend/tests/test_logging.py`
 
-- [ ] **Step 1: Write the failing test** — `backend/tests/test_logging.py`
+- [x] **Step 1: Write the failing test** — `backend/tests/test_logging.py`
 
 ```python
 import logging
@@ -394,12 +394,12 @@ def test_configure_logging_is_idempotent():
     assert logger.level == logging.DEBUG
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run (from `backend/`): `uv run pytest tests/test_logging.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.logging'`.
 
-- [ ] **Step 3: Implement `backend/app/core/logging.py`**
+- [x] **Step 3: Implement `backend/app/core/logging.py`**
 
 ```python
 import logging
@@ -427,12 +427,12 @@ def configure_logging(level: str = "INFO") -> None:
     logger.propagate = False
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run (from `backend/`): `uv run pytest tests/test_logging.py -v`
 Expected: PASS (2 passed).
 
-- [ ] **Step 5: Commit (await user approval)**
+- [x] **Step 5: Commit (await user approval)**
 
 ```bash
 git add backend/app/core/logging.py backend/tests/test_logging.py
@@ -446,7 +446,7 @@ git commit -m "feat: add structured logging setup"
 **Files:**
 - Create: `docker-compose.yml` (repo root)
 
-- [ ] **Step 1: Create `docker-compose.yml`** (backend service is added in Task 11)
+- [x] **Step 1: Create `docker-compose.yml`** (backend service is added in Task 11)
 
 ```yaml
 services:
@@ -471,23 +471,23 @@ volumes:
   postgres_data:
 ```
 
-- [ ] **Step 2: Validate the compose file**
+- [x] **Step 2: Validate the compose file**
 
 Run (from repo root): `docker compose config`
 Expected: prints the resolved config with no errors.
 
-- [ ] **Step 3: Start Postgres and confirm health**
+- [x] **Step 3: Start Postgres and confirm health**
 
 Run: `docker compose up -d postgres`
 Then: `docker compose ps`
 Expected: `notes_rag_postgres` is `running (healthy)` within ~15s.
 
-- [ ] **Step 4: Confirm the vector extension is available in the image**
+- [x] **Step 4: Confirm the vector extension is available in the image**
 
 Run: `docker compose exec postgres psql -U notes -d notes_rag -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extname FROM pg_extension WHERE extname='vector';"`
 Expected: a row with `vector`.
 
-- [ ] **Step 5: Commit (await user approval)**
+- [x] **Step 5: Commit (await user approval)**
 
 ```bash
 git add docker-compose.yml
@@ -501,7 +501,7 @@ git commit -m "feat: add postgres (pgvector) docker-compose service"
 **Files:**
 - Create: `backend/app/db/base.py`, `backend/app/db/session.py`
 
-- [ ] **Step 1: Implement `backend/app/db/base.py`**
+- [x] **Step 1: Implement `backend/app/db/base.py`**
 
 ```python
 from sqlalchemy.orm import DeclarativeBase
@@ -511,7 +511,7 @@ class Base(DeclarativeBase):
     """Declarative base for all ORM models."""
 ```
 
-- [ ] **Step 2: Implement `backend/app/db/session.py`**
+- [x] **Step 2: Implement `backend/app/db/session.py`**
 
 ```python
 from collections.abc import AsyncGenerator
@@ -542,12 +542,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 ```
 
-- [ ] **Step 3: Type-check**
+- [x] **Step 3: Type-check**
 
 Run (from `backend/`): `uv run mypy app/db`
 Expected: `Success: no issues found`.
 
-- [ ] **Step 4: Commit (await user approval)**
+- [x] **Step 4: Commit (await user approval)**
 
 ```bash
 git add backend/app/db/base.py backend/app/db/session.py
@@ -561,18 +561,18 @@ git commit -m "feat: add async SQLAlchemy engine and session dependency"
 **Files:**
 - Create: `backend/alembic.ini`, `backend/app/db/migrations/env.py`, `backend/app/db/migrations/script.py.mako`, `backend/app/db/migrations/versions/0001_enable_vector.py`
 
-- [ ] **Step 1: Initialize Alembic with the async template**
+- [x] **Step 1: Initialize Alembic with the async template**
 
 Run (from `backend/`): `uv run alembic init -t async app/db/migrations`
 Expected: creates `alembic.ini` and `app/db/migrations/` (env.py, script.py.mako, versions/).
 
-- [ ] **Step 2: Point `alembic.ini` at a placeholder URL** — set the `sqlalchemy.url` line to (the real URL is injected in env.py from Settings):
+- [x] **Step 2: Point `alembic.ini` at a placeholder URL** — set the `sqlalchemy.url` line to (the real URL is injected in env.py from Settings):
 
 ```ini
 sqlalchemy.url = driver://user:pass@localhost/dbname
 ```
 
-- [ ] **Step 3: Replace `backend/app/db/migrations/env.py`** with this (reads URL from Settings, async):
+- [x] **Step 3: Replace `backend/app/db/migrations/env.py`** with this (reads URL from Settings, async):
 
 ```python
 import asyncio
@@ -628,7 +628,7 @@ else:
     asyncio.run(run_migrations_online())
 ```
 
-- [ ] **Step 4: Create the initial migration manually** — `backend/app/db/migrations/versions/0001_enable_vector.py`
+- [x] **Step 4: Create the initial migration manually** — `backend/app/db/migrations/versions/0001_enable_vector.py`
 
 ```python
 """enable pgvector extension
@@ -653,17 +653,17 @@ def downgrade() -> None:
     op.execute("DROP EXTENSION IF EXISTS vector")
 ```
 
-- [ ] **Step 5: Ensure Postgres is up (Task 5) and run the migration**
+- [x] **Step 5: Ensure Postgres is up (Task 5) and run the migration**
 
 Run (from `backend/`, with `backend/.env` present): `uv run alembic upgrade head`
 Expected: `Running upgrade  -> 0001_enable_vector`.
 
-- [ ] **Step 6: Verify the extension exists**
+- [x] **Step 6: Verify the extension exists**
 
 Run: `docker compose exec postgres psql -U notes -d notes_rag -c "SELECT extname FROM pg_extension WHERE extname='vector';"`
 Expected: one row `vector`.
 
-- [ ] **Step 7: Commit (await user approval)**
+- [x] **Step 7: Commit (await user approval)**
 
 ```bash
 git add backend/alembic.ini backend/app/db/migrations
@@ -677,7 +677,7 @@ git commit -m "feat: add alembic with initial pgvector-enable migration"
 **Files:**
 - Create: `backend/tests/conftest.py`
 
-- [ ] **Step 1: Implement `backend/tests/conftest.py`**
+- [x] **Step 1: Implement `backend/tests/conftest.py`**
 
 ```python
 import os
@@ -713,12 +713,12 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         yield ac
 ```
 
-- [ ] **Step 2: Sanity-check collection (no tests use fixtures yet)**
+- [x] **Step 2: Sanity-check collection (no tests use fixtures yet)**
 
 Run (from `backend/`): `uv run pytest --collect-only`
 Expected: collects existing tests without import errors.
 
-- [ ] **Step 3: Commit (await user approval)**
+- [x] **Step 3: Commit (await user approval)**
 
 ```bash
 git add backend/tests/conftest.py
@@ -733,7 +733,7 @@ git commit -m "test: add async db_session and client fixtures"
 - Create: `backend/app/db/repositories/base.py`
 - Test: `backend/tests/test_repository.py`
 
-- [ ] **Step 1: Write the failing test** — `backend/tests/test_repository.py`
+- [x] **Step 1: Write the failing test** — `backend/tests/test_repository.py`
 
 ```python
 import pytest
@@ -782,12 +782,12 @@ async def test_get_missing_returns_none(db_session, widget_table):
     assert await repo.get(999999) is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run (from `backend/`, Postgres up): `uv run pytest tests/test_repository.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.db.repositories.base'`.
 
-- [ ] **Step 3: Implement `backend/app/db/repositories/base.py`**
+- [x] **Step 3: Implement `backend/app/db/repositories/base.py`**
 
 ```python
 from typing import Generic, TypeVar
@@ -828,12 +828,12 @@ class BaseRepository(Generic[ModelT]):
         await self._session.flush()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run (from `backend/`): `uv run pytest tests/test_repository.py -v`
 Expected: PASS (2 passed).
 
-- [ ] **Step 5: Commit (await user approval)**
+- [x] **Step 5: Commit (await user approval)**
 
 ```bash
 git add backend/app/db/repositories/base.py backend/tests/test_repository.py
@@ -848,7 +848,7 @@ git commit -m "feat: add generic async BaseRepository"
 - Create: `backend/app/schemas/health.py`, `backend/app/services/health.py`, `backend/app/api/health.py`, `backend/app/main.py`
 - Test: `backend/tests/test_health.py`
 
-- [ ] **Step 1: Write the failing tests** — `backend/tests/test_health.py`
+- [x] **Step 1: Write the failing tests** — `backend/tests/test_health.py`
 
 ```python
 import pytest
@@ -893,12 +893,12 @@ async def test_health_endpoint_returns_200(client):
     assert body["database"] in ("ok", "error")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run (from `backend/`): `uv run pytest tests/test_health.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.health'`.
 
-- [ ] **Step 3: Implement `backend/app/schemas/health.py`**
+- [x] **Step 3: Implement `backend/app/schemas/health.py`**
 
 ```python
 from typing import Literal
@@ -911,7 +911,7 @@ class HealthResponse(BaseModel):
     database: Literal["ok", "error"]
 ```
 
-- [ ] **Step 4: Implement `backend/app/services/health.py`**
+- [x] **Step 4: Implement `backend/app/services/health.py`**
 
 ```python
 import logging
@@ -940,7 +940,7 @@ class HealthService:
         return HealthResponse(status="ok", database=database)
 ```
 
-- [ ] **Step 5: Implement `backend/app/api/health.py`**
+- [x] **Step 5: Implement `backend/app/api/health.py`**
 
 ```python
 from fastapi import APIRouter, Depends, Response, status
@@ -961,7 +961,7 @@ async def health(response: Response, session: AsyncSession = Depends(get_db)) ->
     return result
 ```
 
-- [ ] **Step 6: Implement `backend/app/main.py`**
+- [x] **Step 6: Implement `backend/app/main.py`**
 
 ```python
 from contextlib import asynccontextmanager
@@ -1009,24 +1009,24 @@ def create_app() -> FastAPI:
 app = create_app()
 ```
 
-- [ ] **Step 7: Run all tests (Postgres up, `backend/.env` present)**
+- [x] **Step 7: Run all tests (Postgres up, `backend/.env` present)**
 
 Run (from `backend/`): `uv run pytest -v`
 Expected: all tests PASS (config, logging, repository, health unit + endpoint).
 
-- [ ] **Step 8: Manually verify the running app**
+- [x] **Step 8: Manually verify the running app**
 
 Run (from repo root): `make dev`  (equivalently, from `backend/`: `uv run uvicorn app.main:app --reload --port 8000`)
 In another shell: `curl http://localhost:8000/health`
 Expected: `{"status":"ok","database":"ok"}`. Visit `http://localhost:8000/` → redirects to `/docs`.
 Stop the server (Ctrl+C).
 
-- [ ] **Step 9: Lint + type-check clean**
+- [x] **Step 9: Lint + type-check clean**
 
 Run (from repo root): `make lint && make typecheck`  (equivalently, from `backend/`: `uv run ruff check . && uv run mypy app`)
 Expected: ruff reports no errors; mypy `Success: no issues found`.
 
-- [ ] **Step 10: Commit (await user approval)**
+- [x] **Step 10: Commit (await user approval)**
 
 ```bash
 git add backend/app/schemas/health.py backend/app/services/health.py backend/app/api/health.py backend/app/main.py backend/tests/test_health.py
@@ -1041,7 +1041,7 @@ git commit -m "feat: add health endpoint (handler -> service -> schema)"
 - Create: `backend/Dockerfile`, `backend/.dockerignore`
 - Modify: `docker-compose.yml`
 
-- [ ] **Step 1: Create `backend/Dockerfile`** (uv-based, multi-stage-lite)
+- [x] **Step 1: Create `backend/Dockerfile`** (uv-based, multi-stage-lite)
 
 ```dockerfile
 FROM python:3.13-slim-bookworm
@@ -1066,7 +1066,7 @@ EXPOSE 8000
 CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 ```
 
-- [ ] **Step 2: Create `backend/.dockerignore`**
+- [x] **Step 2: Create `backend/.dockerignore`**
 
 ```dockerignore
 .venv/
@@ -1078,7 +1078,7 @@ __pycache__/
 tests/
 ```
 
-- [ ] **Step 3: Add the `backend` service to `docker-compose.yml`** — insert under `services:` (after `postgres`):
+- [x] **Step 3: Add the `backend` service to `docker-compose.yml`** — insert under `services:` (after `postgres`):
 
 ```yaml
   backend:
@@ -1096,22 +1096,22 @@ tests/
       - "8000:8000"
 ```
 
-- [ ] **Step 4: Build and run the full stack**
+- [x] **Step 4: Build and run the full stack**
 
 Run (from repo root): `docker compose up --build -d`
 Then: `docker compose ps`
 Expected: both `notes_rag_postgres` (healthy) and `notes_rag_backend` (running).
 
-- [ ] **Step 5: Verify health through the container**
+- [x] **Step 5: Verify health through the container**
 
 Run: `curl http://localhost:8000/health`
 Expected: `{"status":"ok","database":"ok"}`.
 
-- [ ] **Step 6: Tear down**
+- [x] **Step 6: Tear down**
 
 Run: `docker compose down`
 
-- [ ] **Step 7: Commit (await user approval)**
+- [x] **Step 7: Commit (await user approval)**
 
 ```bash
 git add backend/Dockerfile backend/.dockerignore docker-compose.yml
@@ -1125,7 +1125,7 @@ git commit -m "feat: containerize backend and wire into compose"
 **Files:**
 - Create: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Create `.github/workflows/ci.yml`**
+- [x] **Step 1: Create `.github/workflows/ci.yml`**
 
 ```yaml
 name: CI
@@ -1176,12 +1176,12 @@ jobs:
         run: uv run pytest
 ```
 
-- [ ] **Step 2: Validate YAML locally (optional)**
+- [x] **Step 2: Validate YAML locally (optional)**
 
 Run: `python -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml')); print('valid')"`
 Expected: `valid`.
 
-- [ ] **Step 3: Commit (await user approval)**
+- [x] **Step 3: Commit (await user approval)**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -1197,7 +1197,7 @@ git commit -m "ci: add lint/type/test workflow with postgres service"
 **Files:**
 - Modify: `.devcontainer/devcontainer.json`
 
-- [ ] **Step 1: Replace `.devcontainer/devcontainer.json`** with:
+- [x] **Step 1: Replace `.devcontainer/devcontainer.json`** with:
 
 ```json
 {
@@ -1224,7 +1224,7 @@ git commit -m "ci: add lint/type/test workflow with postgres service"
 }
 ```
 
-- [ ] **Step 2: Commit (await user approval)**
+- [x] **Step 2: Commit (await user approval)**
 
 ```bash
 git add .devcontainer/devcontainer.json
@@ -1239,7 +1239,7 @@ git commit -m "chore: retarget devcontainer to FastAPI backend"
 - Create: `docs/learning/00-foundation.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: Create `docs/learning/00-foundation.md`** with sections explaining each concept introduced (write real prose, not placeholders):
+- [x] **Step 1: Create `docs/learning/00-foundation.md`** with sections explaining each concept introduced (write real prose, not placeholders):
   - **App factory** — why `create_app()` is a function returning a configured `FastAPI`, and how the test client builds its own instance.
   - **pydantic-settings** — one typed `Settings` object vs scattered `os.getenv`; `.env` loading; `lru_cache`.
   - **Async SQLAlchemy** — engine vs session vs sessionmaker; why `get_db()` yields per-request; `expire_on_commit=False`.
@@ -1249,16 +1249,16 @@ git commit -m "chore: retarget devcontainer to FastAPI backend"
   - **pytest fixtures** — `db_session` and `client`; unit (fake session) vs integration (real DB) tests.
   - **uv & make** — env/lock management with uv; the `Makefile` as the task runner (`make dev|test|lint|…`).
 
-- [ ] **Step 2: Replace `README.md`** top-level sections to describe the new stack:
+- [x] **Step 2: Replace `README.md`** top-level sections to describe the new stack:
   - Project description (agentic RAG, full-stack), the 5-phase roadmap (link the spec), and Phase 0 status.
   - **Quickstart:** prerequisites (Docker, uv, make); `cp backend/.env.example backend/.env`; `make db`; `cd backend && uv sync`; `make migrate`; `make dev`; visit `http://localhost:8000/docs`.
   - **Full stack:** `make up` (`docker compose up --build -d`).
   - **Dev commands:** `make check` (lint+type+test), and `make test|lint|format|typecheck|migrate|revision m="..."`.
   - Note: the old Streamlit app lives in `legacy/`.
 
-- [ ] **Step 3: Verify quickstart commands match reality** by following them once from a clean shell (Postgres down → up → migrate → dev → curl health). Fix any mismatch in the README.
+- [x] **Step 3: Verify quickstart commands match reality** by following them once from a clean shell (Postgres down → up → migrate → dev → curl health). Fix any mismatch in the README.
 
-- [ ] **Step 4: Commit (await user approval)**
+- [x] **Step 4: Commit (await user approval)**
 
 ```bash
 git add docs/learning/00-foundation.md README.md
@@ -1269,14 +1269,14 @@ git commit -m "docs: add foundation learning guide and update README"
 
 ## Definition of Done (verify all)
 
-- [ ] `docker compose up --build` boots Postgres (healthy) + backend.
-- [ ] `curl http://localhost:8000/health` → `{"status":"ok","database":"ok"}`.
-- [ ] `cd backend && uv run pytest` → all pass.
-- [ ] `make lint` and `make typecheck` → clean.
-- [ ] CI workflow present; green after push (user-initiated).
-- [ ] `.env` gitignored; only `.env.example` committed.
-- [ ] `docs/learning/00-foundation.md` complete; README updated.
-- [ ] Legacy Streamlit app preserved under `legacy/`.
+- [x] `docker compose up --build` boots Postgres (healthy) + backend.
+- [x] `curl http://localhost:8000/health` → `{"status":"ok","database":"ok"}`.
+- [x] `cd backend && uv run pytest` → all pass.
+- [x] `make lint` and `make typecheck` → clean.
+- [x] CI workflow present; green after push (user-initiated).
+- [x] `.env` gitignored; only `.env.example` committed.
+- [x] `docs/learning/00-foundation.md` complete; README updated.
+- [x] Legacy Streamlit app preserved under `legacy/`.
 
 ---
 

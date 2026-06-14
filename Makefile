@@ -1,4 +1,4 @@
-.PHONY: up down db dev test lint format typecheck migrate revision check
+.PHONY: up down db test-db dev test lint format typecheck migrate revision check
 
 # --- Docker ---
 up:
@@ -7,6 +7,9 @@ down:
 	docker compose down
 db:
 	docker compose up -d postgres
+# Create the dedicated test database (idempotent). Tests run against this, never dev data.
+test-db:
+	docker compose exec postgres psql -U notes -d notes_rag -tc "SELECT 1 FROM pg_database WHERE datname='notes_rag_test'" | grep -q 1 || docker compose exec postgres psql -U notes -d notes_rag -c "CREATE DATABASE notes_rag_test OWNER notes;"
 
 # --- Backend (via uv) ---
 dev:
