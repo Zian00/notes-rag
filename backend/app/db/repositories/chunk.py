@@ -25,6 +25,8 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         super().__init__(DocumentChunk, session)
 
     async def add_many(self, rows: list[dict]) -> None:
+        # Bulk-insert all chunks for a document in one go. flush() sends the INSERTs now
+        # (so FKs/ids resolve) but does NOT commit — the service owns the transaction.
         self._session.add_all([DocumentChunk(**row) for row in rows])
         await self._session.flush()
 
@@ -36,12 +38,14 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         course: str | None = None,
         tags: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        # cosine_distance emits pgvector's `<=>` operator. Distance 0 = identical direction,
+        # 2 = opposite; for our unit vectors it's in [0, 2]. We sort ascending (closest first).
         distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
         stmt = (
             select(
                 DocumentChunk.id,
                 DocumentChunk.document_id,
-                Document.filename,
+                Document.filename,  # joined in so the API can show the source
                 Document.title,
                 DocumentChunk.content,
                 DocumentChunk.page_number,
@@ -49,12 +53,16 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
                 distance,
             )
             .join(Document, DocumentChunk.document_id == Document.id)
+            # per-user isolation: never return another user's chunks
             .where(DocumentChunk.user_id == user_id)
         )
+        # Optional metadata narrowing applied as plain SQL filters BEFORE the vector sort.
         if course is not None:
             stmt = stmt.where(Document.course == course)
         if tags:
-            stmt = stmt.where(Document.tags.contains(tags))
+            stmt = stmt.where(Document.tags.contains(tags))  # JSONB @> : doc has all given tags
+        # order_by(distance) uses the labeled expression object (a bare "distance" string
+        # would raise in SQLAlchemy 2.0). The HNSW index makes this ORDER BY fast.
         stmt = stmt.order_by(distance).limit(top_k)
 
         result = await self._session.execute(stmt)
@@ -67,7 +75,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
                 content=row.content,
                 page_number=row.page_number,
                 section=row.section,
-                score=1.0 - float(row.distance),
+                score=1.0 - float(row.distance),  # flip distance → similarity (higher = closer)
             )
             for row in result.all()
         ]

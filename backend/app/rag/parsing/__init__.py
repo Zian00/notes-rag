@@ -24,6 +24,8 @@ class ParserDispatcher:
         self._pdf = PdfParser(ocr=ocr, ocr_enabled=ocr_enabled, min_chars=min_chars)
 
     def parse(self, data: bytes, content_type: str) -> ParsedDocument:
+        # Route to the adapter for this (already-sniffed) type. Every adapter returns the
+        # same ParsedDocument shape, so the rest of the pipeline doesn't care about format.
         if content_type == "application/pdf":
             return self._pdf.parse(data, content_type)
         if content_type == _PPTX:
@@ -34,4 +36,4 @@ class ParserDispatcher:
             return self._text.parse(data, content_type)
         if content_type in ("image/png", "image/jpeg"):
             return self._image.parse(data, content_type)
-        raise UnsupportedContentType(content_type)
+        raise UnsupportedContentType(content_type)  # should never hit (handler sniffs first)

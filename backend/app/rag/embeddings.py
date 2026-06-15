@@ -17,13 +17,19 @@ def l2_normalize(vector: list[float]) -> list[float]:
 
 
 class EmbeddingsProvider(ABC):
-    """Port: turn text into embedding vectors."""
+    """Port: turn text into embedding vectors.
+
+    An "embedding" is a list of numbers that captures the *meaning* of text — similar
+    meanings produce nearby vectors, which is what makes semantic search work. This is
+    an abstract interface (a "port"); a concrete adapter implements it, and code depends
+    on this interface, not the vendor.
+    """
 
     @abstractmethod
-    def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
+    def embed_documents(self, texts: list[str]) -> list[list[float]]: ...  # batch (chunks)
 
     @abstractmethod
-    def embed_query(self, text: str) -> list[float]: ...
+    def embed_query(self, text: str) -> list[float]: ...  # single (search query)
 
 
 class GeminiEmbeddingsProvider(EmbeddingsProvider):
@@ -33,6 +39,8 @@ class GeminiEmbeddingsProvider(EmbeddingsProvider):
         self._client = genai.Client(api_key=settings.google_api_key)
         self._model = settings.embedding_model
         self._dim = settings.embedding_dimension
+        # Asymmetric task types: documents and queries are embedded with different hints
+        # (RETRIEVAL_DOCUMENT vs RETRIEVAL_QUERY), which measurably improves retrieval.
         self._doc_task = settings.embedding_doc_task_type
         self._query_task = settings.embedding_query_task_type
 
@@ -40,17 +48,20 @@ class GeminiEmbeddingsProvider(EmbeddingsProvider):
         resp = self._client.models.embed_content(
             model=self._model,
             contents=texts,  # type: ignore[arg-type]
+            # output_dimensionality truncates the model's native 3072 dims down to ours (1536).
             config=types.EmbedContentConfig(
                 task_type=task_type, output_dimensionality=self._dim
             ),
         )
         embeddings = resp.embeddings or []
+        # Re-normalize: Gemini only unit-normalizes the full 3072-dim output, so truncated
+        # vectors must be normalized by us for cosine distance to be valid.
         return [l2_normalize(list(e.values or [])) for e in embeddings]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
-            return []
+            return []  # the API rejects an empty batch; nothing to embed anyway
         return self._embed(texts, self._doc_task)
 
     def embed_query(self, text: str) -> list[float]:
-        return self._embed([text], self._query_task)[0]
+        return self._embed([text], self._query_task)[0]  # one text in → one vector out
