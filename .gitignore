@@ -1,3 +1,6 @@
+# Uploaded files (local dev; Docker uses a named volume)
+backend/uploads/
+
 # Vector database (legacy)
 legacy/chroma_db/
 

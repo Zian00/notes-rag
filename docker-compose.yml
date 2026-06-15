@@ -28,8 +28,13 @@ services:
       JWT_SECRET: dev-only-change-me
       ENVIRONMENT: development
       CORS_ORIGINS: '["http://localhost:5173"]'
+      UPLOAD_DIR: /data/uploads
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    volumes:
+      - uploads_data:/data/uploads
     ports:
       - "8000:8000"
 
 volumes:
   postgres_data:
+  uploads_data:
