@@ -32,6 +32,38 @@ class Settings(BaseSettings):
     environment: Literal["development", "production"] = "development"
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # Embeddings (Phase 2)
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimension: int = 1536
+    embedding_doc_task_type: str = "RETRIEVAL_DOCUMENT"
+    embedding_query_task_type: str = "RETRIEVAL_QUERY"
+
+    # Chunking
+    chunk_tokens: int = 512
+    chunk_overlap_tokens: int = 64
+
+    # Uploads / storage
+    upload_dir: str = "./uploads"
+    max_upload_bytes: int = 26_214_400  # 25 MiB
+    allowed_content_types: list[str] = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "text/markdown",
+        "image/png",
+        "image/jpeg",
+    ]
+
+    # OCR
+    ocr_enabled: bool = True
+    ocr_language: str = "eng"
+    pdf_ocr_min_chars_per_page: int = 10
+    tesseract_cmd: str | None = None
+
+    # Retrieval
+    retrieval_top_k: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -31,7 +31,7 @@ def _test_database_url() -> str:
 TEST_DATABASE_URL = _test_database_url()
 
 # Tables whose rows are wiped between tests (NOT alembic_version).
-_TRUNCATE_TABLES = "users, refresh_tokens"
+_TRUNCATE_TABLES = "users, refresh_tokens, documents, document_chunks"
 
 
 @pytest_asyncio.fixture
@@ -46,6 +46,10 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
 
     engine = create_async_engine(TEST_DATABASE_URL, future=True)
     async with engine.begin() as conn:
+        # The test DB is built via create_all (not Alembic), so the pgvector extension
+        # that migration 0001 adds to the dev DB must be enabled here too — the
+        # document_chunks.embedding Vector column needs it. Idempotent + non-destructive.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text(f"TRUNCATE {_TRUNCATE_TABLES} RESTART IDENTITY CASCADE"))
     yield engine
