@@ -64,10 +64,19 @@ async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def client(_engine: AsyncEngine) -> AsyncGenerator[AsyncClient]:
-    """HTTP client whose app talks to the TEST DB via a get_db override."""
+async def client(_engine: AsyncEngine, tmp_path) -> AsyncGenerator[AsyncClient]:
+    """HTTP client whose app talks to the TEST DB and uses fake OCR/embeddings + temp storage.
+
+    Overriding the leaf provider dependencies (not the services) keeps endpoint tests fast and
+    deterministic: no Google API key, no network, no tesseract binary, and uploaded files land
+    in a throwaway tmp dir.
+    """
+    from app.api.deps import get_embeddings, get_ocr, get_storage
     from app.db.session import get_db
     from app.main import create_app
+    from app.rag.storage import LocalFileStorage
+
+    from tests.fakes import FakeEmbeddingsProvider, FakeOcrProvider
 
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -77,6 +86,22 @@ async def client(_engine: AsyncEngine) -> AsyncGenerator[AsyncClient]:
 
     app = create_app()
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddingsProvider()
+    app.dependency_overrides[get_ocr] = lambda: FakeOcrProvider()
+    app.dependency_overrides[get_storage] = lambda: LocalFileStorage(str(tmp_path))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest_asyncio.fixture
+async def auth_client(client: AsyncClient) -> AsyncGenerator[AsyncClient]:
+    """A `client` that has registered + logged in; Authorization header preset."""
+    import uuid as _uuid
+
+    email = f"user-{_uuid.uuid4().hex}@example.com"
+    await client.post("/auth/register", json={"email": email, "password": "password123"})
+    resp = await client.post("/auth/login", json={"email": email, "password": "password123"})
+    token = resp.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+    yield client
