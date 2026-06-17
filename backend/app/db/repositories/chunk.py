@@ -79,3 +79,18 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
             )
             for row in result.all()
         ]
+
+    async def get_for_document(
+        self, document_id: uuid.UUID, user_id: uuid.UUID
+    ) -> list[DocumentChunk]:
+        """All chunks of one document, in order — for whole-document summarisation.
+        Scoped to the owner so a user can never fetch another user's document."""
+        stmt = (
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.user_id == user_id,
+            )
+            .order_by(DocumentChunk.chunk_index)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())

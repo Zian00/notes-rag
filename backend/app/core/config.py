@@ -64,6 +64,21 @@ class Settings(BaseSettings):
     # Retrieval
     retrieval_top_k: int = 5
 
+    # --- Phase 3: agentic RAG / LLM ---
+    llm_provider: Literal["google", "anthropic", "openai_compatible"] = "google"
+    # llm_model already declared above (default "gemini-2.5-flash")
+    llm_temperature: float = 0.2  # low → grounded, less drift
+    llm_base_url: str | None = None  # for openai_compatible (local Ollama/vLLM)
+    anthropic_api_key: str = ""  # only used when llm_provider == "anthropic"
+    agentic_retrieval: bool = True  # False → deterministic always-retrieve path
+    max_grade_retries: int = 2  # corrective rewrite cap
+    chat_history_limit: int = 20  # max prior messages fed to the model
+
+    @property
+    def checkpointer_conninfo(self) -> str:
+        """psycopg3 conninfo for the LangGraph checkpointer (strip the asyncpg driver suffix)."""
+        return self.database_url.replace("+asyncpg", "")
+
 
 @lru_cache
 def get_settings() -> Settings:
