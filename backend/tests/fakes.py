@@ -85,11 +85,25 @@ class FakeChatModel(BaseChatModel):
 
         _astream must yield ``ChatGenerationChunk`` (not ``ChatGeneration``) — the
         base class's ``astream`` wraps these into ``AIMessageChunk`` deltas. We yield
-        one chunk with the full text; tests that check streaming see at least one delta.
+        one chunk with the full content; tests that check streaming see at least one delta.
+
+        Why we copy tool_calls onto the chunk:
+        When ChatService uses ``graph.astream(stream_mode="messages")``, LangGraph
+        intercepts model.ainvoke() and calls _astream internally instead of _agenerate.
+        If the chunk doesn't carry tool_calls, route_after_agent sees no tool_calls on the
+        accumulated message and routes to generate directly — skipping the tools node.
+        Copying tool_calls onto the AIMessageChunk preserves the routing behaviour.
         """
+        from langchain_core.messages import AIMessage as _AI
+
         msg = self._next()
-        text = msg.content if isinstance(msg, BaseMessage) else str(msg)
-        yield ChatGenerationChunk(message=AIMessageChunk(content=text))
+        if isinstance(msg, _AI) and msg.tool_calls:
+            # Preserve tool_calls so LangGraph routes correctly after streaming.
+            chunk = AIMessageChunk(content=msg.content, tool_calls=msg.tool_calls)
+        else:
+            text = msg.content if isinstance(msg, BaseMessage) else str(msg)
+            chunk = AIMessageChunk(content=text)
+        yield ChatGenerationChunk(message=chunk)
 
 
 class FakeOcrProvider(OcrProvider):

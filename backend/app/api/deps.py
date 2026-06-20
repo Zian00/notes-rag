@@ -2,6 +2,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from app.core.config import Settings, get_settings
 from app.core.security import PasswordHasher, TokenService
@@ -9,7 +10,7 @@ from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.refresh_token import RefreshTokenRepository
 from app.db.repositories.user import UserRepository
-from app.db.session import get_db
+from app.db.session import get_db, get_sessionmaker
 from app.models.user import User
 from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
@@ -17,6 +18,7 @@ from app.rag.ocr import OcrProvider, TesseractOcr
 from app.rag.parsing import ParserDispatcher
 from app.rag.storage import LocalFileStorage, StorageBackend
 from app.services.auth import AuthService
+from app.services.chat import ChatService
 from app.services.ingestion import IngestionService
 from app.services.retrieval import RetrievalService
 
@@ -117,3 +119,22 @@ def get_retrieval_service(
         embeddings=embeddings,
         default_top_k=settings.retrieval_top_k,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Chat graph + ChatService
+# ---------------------------------------------------------------------------
+
+
+def get_chat_graph(request: Request) -> object:
+    """Return the compiled RAG graph stored on app.state during lifespan startup."""
+    return request.app.state.chat_graph
+
+
+def get_chat_service(request: Request) -> ChatService:
+    """Return a ChatService backed by the lifespan-compiled graph and the app sessionmaker.
+
+    ChatService opens its own DB sessions (not the request session) so DB access
+    survives the StreamingResponse after the request's session is closed.
+    """
+    return ChatService(request.app.state.chat_graph, get_sessionmaker())
