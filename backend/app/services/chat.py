@@ -32,12 +32,25 @@ def _sse(event: str, data: Any) -> str:
 
 
 def _to_citations(context: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Trim context dicts to the citation-safe subset of keys for the client."""
-    return [
-        {k: c.get(k) for k in
-         ("chunk_id", "document_id", "filename", "title", "page_number", "section", "score")}
-        for c in context
-    ]
+    """Trim context dicts to the citation-safe subset of keys for the client.
+
+    Deduped by document_id (first occurrence wins) so citations represent
+    source *documents*, not individual chunks.  Whole-document tool calls
+    produce one chunk per page; without this dedup the citations list would
+    balloon to dozens of near-identical entries for the same document.
+    """
+    seen: set[Any] = set()
+    result: list[dict[str, Any]] = []
+    for c in context:
+        doc_id = c.get("document_id")
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        result.append(
+            {k: c.get(k) for k in
+             ("chunk_id", "document_id", "filename", "title", "page_number", "section", "score")}
+        )
+    return result
 
 
 class ChatService:
@@ -85,6 +98,11 @@ class ChatService:
         *before* yielding anything so the caller (the HTTP endpoint) can return a proper
         4xx instead.
         """
+        # Track whether *this* call created the row so we can clean up on error.
+        # (A conversation_id supplied by the caller already has committed data; we
+        # must not delete it if that existing conversation errors on turn N.)
+        created_this_call = conversation_id is None
+
         # Ownership check / row creation before we yield anything.
         if conversation_id is None:
             conversation_id = await self._create(user_id, question)
@@ -111,11 +129,14 @@ class ChatService:
             "retry_count": 0,
         }
 
+        streamed_any = False  # becomes True once a token frame is yielded
+
         try:
             # stream_mode="messages" yields (msg, metadata) tuples; we only emit tokens
             # from the "generate" node so the client doesn't see intermediate tool messages.
             async for msg, metadata in self._graph.astream(inputs, config, stream_mode="messages"):
                 if metadata.get("langgraph_node") == "generate" and getattr(msg, "content", ""):
+                    streamed_any = True
                     yield _sse("token", {"delta": msg.content})
 
             # After streaming, fetch the final state to extract grounding sources.
@@ -130,6 +151,18 @@ class ChatService:
             yield _sse("done", {})
 
         except Exception as exc:
+            # If this call created the conversation row AND no tokens were streamed yet
+            # (i.e. the turn produced no visible output), delete the orphan row so it
+            # doesn't pollute GET /conversations.  If tokens already reached the client
+            # we keep the row — the turn partially succeeded and the history is useful.
+            if created_this_call and not streamed_any:
+                try:
+                    async with self._sm() as s:
+                        await ConversationRepository(s).delete(conversation_id)
+                        await s.commit()
+                except Exception:
+                    pass  # best-effort; an orphan row is preferable to swallowing the real error
+
             # Surface a clean error frame so the client stream always terminates gracefully.
             yield _sse("error", {"detail": str(exc)})
 

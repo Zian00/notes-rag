@@ -456,6 +456,64 @@ async def test_get_detail_wrong_owner_raises(_engine: AsyncEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 7. Error frame path — graph error on new conversation cleans up orphan row
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_error_frame_and_orphan_cleanup(_engine: AsyncEngine) -> None:
+    """When the graph errors on a brand-new conversation the service must:
+    1. Yield a 'meta' frame first (client still gets a conversation_id).
+    2. Yield an 'error' frame (not crash silently).
+    3. Delete the just-created conversation row (A-I1: no phantom in list_conversations).
+
+    Forcing the error: FakeChatModel with an empty responses list raises IndexError
+    on the very first LLM invocation — before any token is streamed.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        # Commit the user row; other tests rely on _seed_doc for this, but here
+        # we deliberately skip seeding so the graph fails on the first LLM call.
+        await s.commit()
+
+    # Empty responses → FakeChatModel raises on the first call (forces graph error).
+    model = FakeChatModel(responses=[])
+    svc = _build_service(model, maker)
+
+    gen = svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="this will error",
+    )
+    frames = await _collect_frames(gen)
+
+    event_names = [e for e, _ in frames]
+
+    # 1. meta frame must still be yielded (client learns the conversation_id).
+    assert "meta" in event_names, f"Expected 'meta' frame before error, got: {event_names}"
+    meta_data = next(d for e, d in frames if e == "meta")
+    convo_id = uuid.UUID(meta_data["conversation_id"])
+
+    # 2. error frame must be present with a 'detail' key.
+    assert "error" in event_names, f"Expected 'error' frame, got: {event_names}"
+    error_data = next(d for e, d in frames if e == "error")
+    assert "detail" in error_data, f"'error' frame must carry 'detail', got: {error_data}"
+
+    # 3. orphan row must be cleaned up (A-I1).
+    convos = await svc.list_conversations(user.id)
+    assert convos == [], (
+        f"Orphan conversation row was NOT deleted after a no-output error; "
+        f"found: {[str(c.id) for c in convos]}"
+    )
+    # Also confirm the specific row is gone.
+    async with maker() as s:
+        from app.db.repositories.conversation import ConversationRepository as _CR
+        row = await _CR(s).get_for_user(convo_id, user.id)
+    assert row is None, "The orphan conversation row still exists in the database."
+
+
+# ---------------------------------------------------------------------------
 # 6. delete_conversation — removes row, get_detail then raises
 # ---------------------------------------------------------------------------
 
