@@ -56,11 +56,16 @@ cd backend && uv sync
 # 4. Apply database migrations
 make migrate
 
-# 5. Start the backend with live reload
+# 5. Start the backend
 make dev
 ```
 
 Then open the interactive API docs at http://localhost:8000/docs.
+
+> **Note:** `make dev` runs through `backend/run_dev.py`. On Linux/macOS it includes live reload.
+> On **Windows** it runs **without** reload — the LangGraph Postgres checkpointer uses psycopg3, which
+> needs a `SelectorEventLoop` that uvicorn's reloader can't provide on Windows (restart manually after
+> edits, or run the full stack with `make up`).
 
 ---
 
