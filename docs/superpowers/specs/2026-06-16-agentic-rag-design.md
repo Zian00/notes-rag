@@ -105,7 +105,7 @@ LangGraph RAG graph (compiled once at startup, app.state)         ── app/rag
           [tools] ── dispatch by tool ──────────────────────────────────────────────┐
              ├─ retrieve_notes ─► RetrievalService.search(user_id, q, k, filters)     │  [reuses Phase 2]
              │                       ▼                                                │
-             │                    [grade] ──(relevant)──────────────► back to [agent] │
+             │                    [grade] ──(relevant)──────────────────► [generate]  │
              │                       │ (weak & retries left)                          │
              │                       ▼                                                │
              │                    [rewrite] ─► back to [agent]  (≤ max_grade_retries) │
@@ -165,10 +165,12 @@ are embedded with the existing `EmbeddingsProvider` (`RETRIEVAL_QUERY`).
   weak context, the prompt instructs an honest "I couldn't find this in your notes."
 
 **Conditional edges:** agent→(tool call? tools : generate);
-tools→(was `retrieve_notes`? grade : agent);
-grade→(relevant? agent : (retries left? rewrite : generate));
-rewrite→agent. When `AGENTIC_RETRIEVAL=false`, START→retrieve_notes directly (linear path), skipping
-the agent's tool-call decision while keeping grade → rewrite → generate.
+tools→(was `retrieve_notes`? grade : agent) — note `get_document_content` populates context but is NOT
+graded (a deliberately-fetched named document has nothing to grade), so it routes back to agent;
+grade→(relevant? generate : (retries left? rewrite : generate));
+rewrite→agent. (Once context is graded relevant we generate directly — re-entering the agent would
+just burn a redundant LLM call.) When `AGENTIC_RETRIEVAL=false`, START→retrieve_notes directly (linear
+path), skipping the agent's tool-call decision while keeping grade → rewrite → generate.
 
 **Validation placement (per project conventions):** handler validates question non-empty + parses
 filters + checks conversation ownership (→ `400`/`404`); `ChatService` orchestrates the graph and
