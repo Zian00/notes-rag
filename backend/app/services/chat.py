@@ -58,7 +58,7 @@ class ChatService:
             await s.commit()
             return convo.id
 
-    async def _ensure_owned(self, conversation_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def verify_ownership(self, conversation_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Raise ConversationNotFound if the row does not exist or belongs to another user."""
         async with self._sm() as s:
             if await ConversationRepository(s).get_for_user(conversation_id, user_id) is None:
@@ -91,7 +91,7 @@ class ChatService:
         else:
             # Raises ConversationNotFound immediately (before the StreamingResponse begins)
             # so the endpoint can map it to a 404 if needed.
-            await self._ensure_owned(conversation_id, user_id)
+            await self.verify_ownership(conversation_id, user_id)
 
         # First SSE frame: tells the client which conversation this belongs to.
         yield _sse("meta", {"conversation_id": str(conversation_id)})
@@ -170,7 +170,7 @@ class ChatService:
 
     async def delete_conversation(self, conversation_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Delete the conversation row (ownership-checked) and best-effort checkpointer cleanup."""
-        await self._ensure_owned(conversation_id, user_id)
+        await self.verify_ownership(conversation_id, user_id)
         async with self._sm() as s:
             await ConversationRepository(s).delete(conversation_id)
             await s.commit()

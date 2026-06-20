@@ -8,7 +8,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.api import auth, documents, health, search
+from app.api import auth, chat, conversations, documents, health, search
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import get_engine, get_sessionmaker
@@ -73,6 +73,8 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(documents.router)
     app.include_router(search.router)
+    app.include_router(chat.router)
+    app.include_router(conversations.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:

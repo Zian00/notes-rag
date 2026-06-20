@@ -1,6 +1,7 @@
 import os
 from collections.abc import AsyncGenerator
 
+import pytest
 import pytest_asyncio
 from app.core.config import get_settings
 from app.db.base import Base
@@ -63,18 +64,45 @@ async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
         yield session
 
 
+@pytest.fixture
+def fake_chat_model():
+    """Function-scoped FakeChatModel with an empty responses queue.
+
+    Tests set ``fake_chat_model.responses = [...]`` before issuing requests.
+    The graph built in ``client`` holds a reference to this same object, so
+    responses queued after graph construction are picked up at invocation time.
+    """
+    from tests.fakes import FakeChatModel
+
+    return FakeChatModel(responses=[])
+
+
 @pytest_asyncio.fixture
-async def client(_engine: AsyncEngine, tmp_path) -> AsyncGenerator[AsyncClient]:
+async def client(
+    _engine: AsyncEngine, tmp_path, fake_chat_model
+) -> AsyncGenerator[AsyncClient]:
     """HTTP client whose app talks to the TEST DB and uses fake OCR/embeddings + temp storage.
 
     Overriding the leaf provider dependencies (not the services) keeps endpoint tests fast and
     deterministic: no Google API key, no network, no tesseract binary, and uploaded files land
     in a throwaway tmp dir.
+
+    Chat-service wiring:
+    ``get_chat_service`` normally reads ``request.app.state.chat_graph``, which is set by the
+    lifespan hook.  The lifespan does NOT run under ASGITransport, so ``app.state.chat_graph``
+    would be unset.  We build a graph ONCE per test (backed by ``fake_chat_model`` +
+    ``InMemorySaver``) and override ``get_chat_service`` to return a ``ChatService`` wrapping
+    that graph.  Building the graph once (not per request) is REQUIRED so the ``InMemorySaver``
+    accumulates state across requests within a test — enabling multi-turn tests.
     """
-    from app.api.deps import get_embeddings, get_ocr, get_storage
+    from app.api.deps import get_chat_service, get_embeddings, get_ocr, get_storage
+    from app.core.config import get_settings
     from app.db.session import get_db
     from app.main import create_app
+    from app.rag.graph import build_rag_graph
     from app.rag.storage import LocalFileStorage
+    from app.services.chat import ChatService
+    from langgraph.checkpoint.memory import InMemorySaver
 
     from tests.fakes import FakeEmbeddingsProvider, FakeOcrProvider
 
@@ -84,11 +112,22 @@ async def client(_engine: AsyncEngine, tmp_path) -> AsyncGenerator[AsyncClient]:
         async with maker() as session:
             yield session
 
+    # Build the graph once so InMemorySaver state persists across requests in a test.
+    settings = get_settings()
+    graph = build_rag_graph(
+        chat_model=fake_chat_model,
+        embeddings=FakeEmbeddingsProvider(),
+        sessionmaker=maker,
+        settings=settings,
+        checkpointer=InMemorySaver(),
+    )
+
     app = create_app()
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddingsProvider()
     app.dependency_overrides[get_ocr] = lambda: FakeOcrProvider()
     app.dependency_overrides[get_storage] = lambda: LocalFileStorage(str(tmp_path))
+    app.dependency_overrides[get_chat_service] = lambda: ChatService(graph, maker)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
