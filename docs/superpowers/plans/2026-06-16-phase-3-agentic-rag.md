@@ -1282,20 +1282,20 @@ git add -A && git commit -m "feat(phase3): chat (SSE) + conversations API, schem
 
 **Files:** Modify `docker-compose.yml`, `backend/Dockerfile` (likely no change), `.github/workflows/ci.yml`
 
-- [ ] **Step 1:** No new **system** deps (psycopg[binary] ships its own libpq). Confirm the backend service has `GOOGLE_API_KEY` passthrough (already added in Phase 2) and add `ANTHROPIC_API_KEY` passthrough (optional, empty default). The checkpointer reuses the **same** Postgres `DATABASE_URL` — no new service/volume.
-- [ ] **Step 2:** CI: the new deps install via `uv sync`; tests need no API key (all faked) but DO need the Postgres service (already present from Phase 2). Confirm the checkpointer integration test runs against the CI Postgres. No OCR/key changes needed.
+- [x] **Step 1:** No new **system** deps (psycopg[binary] ships its own libpq). Confirm the backend service has `GOOGLE_API_KEY` passthrough (already added in Phase 2) and add `ANTHROPIC_API_KEY` passthrough (optional, empty default). The checkpointer reuses the **same** Postgres `DATABASE_URL` — no new service/volume.
+- [x] **Step 2:** CI: the new deps install via `uv sync`; tests need no API key (all faked) but DO need the Postgres service (already present from Phase 2). Confirm the checkpointer integration test runs against the CI Postgres. No OCR/key changes needed.
 - [ ] **Step 3:** `docker compose build backend` succeeds; `make up` boots and `GET /health` is green (lifespan runs `setup()` against the compose Postgres).
 
 ### Task 19: Learning doc
 
 **Files:** New `docs/learning/03-agentic-rag.md`
 
-- [ ] **Write** a beginner-friendly explainer (match `02-ingestion-retrieval.md` tone) covering: what LangGraph is (nodes/edges/state), the combined agentic+corrective graph (with the ASCII flow), the 3 tools and why only 3, the configurable LLM factory (and why a factory not an ABC; how to switch to Claude/local), SSE streaming, the Postgres checkpointer (thread_id = conversation id; two DB drivers; schema outside Alembic), and the anti-hallucination grounding contract. Note history omits per-message citations.
+- [x] **Write** a beginner-friendly explainer (match `02-ingestion-retrieval.md` tone) covering: what LangGraph is (nodes/edges/state), the combined agentic+corrective graph (with the ASCII flow), the 3 tools and why only 3, the configurable LLM factory (and why a factory not an ABC; how to switch to Claude/local), SSE streaming, the Postgres checkpointer (thread_id = conversation id; two DB drivers; schema outside Alembic), and the anti-hallucination grounding contract. Note history omits per-message citations.
 
 ### Task 20: Final verification
 
-- [ ] `cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q` → all green.
-- [ ] Update `README.md` roadmap row: Phase 3 → **done**; update the statuses (they're stale — Phase 0 still says "Current").
+- [x] `cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q` → all green.
+- [x] Update `README.md` roadmap row: Phase 3 → **done**; update the statuses (they're stale — Phase 0 still says "Current").
 - [ ] **MILESTONE F — STOP. Suggested commit:**
 ```bash
 git add -A && git commit -m "feat(phase3): docker/CI passthrough, learning doc, README roadmap, final verification"

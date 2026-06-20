@@ -8,10 +8,10 @@ An agentic Retrieval-Augmented Generation application for lecture notes. The pro
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 0 — Foundation | FastAPI app factory, async SQLAlchemy, Alembic, pgvector, CI | **Current** |
-| 1 — Auth | JWT authentication, user model, protected routes | Upcoming |
-| 2 — Ingestion + Retrieval | Document upload, chunking, embedding, vector search | Upcoming |
-| 3 — Agentic RAG / LangGraph | LangGraph agent, retrieval tools, LangGraph checkpoints in Postgres | Upcoming |
+| 0 — Foundation | FastAPI app factory, async SQLAlchemy, Alembic, pgvector, CI | Done |
+| 1 — Auth | JWT authentication, user model, protected routes | Done |
+| 2 — Ingestion + Retrieval | Document upload, chunking, embedding, vector search | Done |
+| 3 — Agentic RAG / LangGraph | LangGraph agent, retrieval tools, LangGraph checkpoints in Postgres | Done |
 | 4 — Frontend | React UI, chat interface, upload flow | Upcoming |
 | 5 — CI/CD + Polish | Docker image publishing, production config, observability | Upcoming |
 
