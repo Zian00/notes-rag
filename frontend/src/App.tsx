@@ -1,12 +1,20 @@
-import { Button } from "@/components/ui/button"
+import { QueryClientProvider } from "@tanstack/react-query"
+import { BrowserRouter } from "react-router-dom"
+import { queryClient } from "@/lib/queryClient"
+import { AuthProvider } from "@/auth/AuthContext"
+import { Toaster } from "@/components/ui/sonner"
+import { AppRoutes } from "@/AppRoutes"
 
-// Milestone A scaffold — minimal App that proves the shadcn Button alias resolves.
-// App logic (auth, documents, chat) is added in later milestones.
 function App() {
   return (
-    <main className="flex min-h-svh items-center justify-center">
-      <Button>Notes RAG</Button>
-    </main>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+        <Toaster />
+      </AuthProvider>
+    </QueryClientProvider>
   )
 }
 
