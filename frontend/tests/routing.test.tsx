@@ -130,6 +130,9 @@ describe("AppRoutes", () => {
         HttpResponse.json({ access_token: "login-token", token_type: "bearer" }),
       ),
       http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
+      // DocumentsPage now fetches the real list on mount (Task 9) — an empty
+      // list keeps this test focused on routing, not document rendering.
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
     )
 
     const user = userEvent.setup()
@@ -142,7 +145,7 @@ describe("AppRoutes", () => {
     await user.type(screen.getByLabelText(/password/i), "password123")
     await user.click(screen.getByRole("button", { name: /log in/i }))
 
-    expect(await screen.findByText(/documents coming in milestone d/i)).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: /^documents$/i })).toBeInTheDocument()
     expect(screen.getByTestId("location-spy")).toHaveTextContent("/documents?course=cs101")
   })
 })
