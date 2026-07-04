@@ -1,8 +1,21 @@
-import { NavLink, useNavigate } from "react-router-dom"
-import { FileText, LogOut, MessageSquare } from "lucide-react"
+import { useState } from "react"
+import { NavLink, useNavigate, useParams } from "react-router-dom"
+import { FileText, LogOut, MessageSquare, Plus, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/auth/useAuth"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { useConversations, useDeleteConversation } from "@/api/hooks/useConversations"
+import { DeleteError } from "@/api/deleteError"
 
 const NAV_ITEMS = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
@@ -17,10 +30,25 @@ interface SidebarProps {
 export function Sidebar({ onNavigate }: SidebarProps) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { conversationId: activeConversationId } = useParams<{ conversationId?: string }>()
+  const conversationsQuery = useConversations()
 
   async function handleLogout() {
     await logout()
     navigate("/login", { replace: true })
+  }
+
+  function handleNewChat() {
+    // Always navigate to bare /chat. ChatPage's useChat is keyed off the
+    // conversationId route param, so navigating away from an existing
+    // conversation naturally starts a fresh (empty) live session via its
+    // reset-guard effect; if the user was already at bare /chat, this is a
+    // route no-op, but that's fine — /chat with no messages sent is already
+    // an empty thread, so there's nothing to clear. Deliberately not calling
+    // ChatPage's `reset()` here since it isn't available at this layer (the
+    // Sidebar and ChatPage don't share a useChat instance).
+    navigate("/chat")
+    onNavigate?.()
   }
 
   return (
@@ -29,11 +57,12 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <span className="font-heading text-base font-semibold">Notes RAG</span>
       </div>
 
-      <nav className="flex-1 space-y-1 p-3" aria-label="Primary">
+      <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Primary">
         {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
+            end
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
@@ -50,10 +79,40 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           </NavLink>
         ))}
 
-        {/* Conversation list is Milestone D — intentionally not built yet. */}
-        <p className="px-3 pt-4 text-xs text-sidebar-foreground/50">
-          Conversation history coming in Milestone D
-        </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-3 w-full justify-start gap-2 text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          onClick={handleNewChat}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          New chat
+        </Button>
+
+        <p className="px-3 pt-4 pb-1 text-xs font-medium text-sidebar-foreground/50">Conversations</p>
+
+        {conversationsQuery.isLoading && (
+          <div className="flex flex-col gap-1.5 px-3 py-1">
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-4/5" />
+          </div>
+        )}
+
+        {!conversationsQuery.isLoading && conversationsQuery.data?.length === 0 && (
+          <p className="px-3 py-1 text-xs text-sidebar-foreground/50">No conversations yet.</p>
+        )}
+
+        {conversationsQuery.data?.map((conversation) => (
+          <ConversationItem
+            key={conversation.id}
+            id={conversation.id}
+            title={conversation.title}
+            isActive={conversation.id === activeConversationId}
+            onNavigate={onNavigate}
+          />
+        ))}
       </nav>
 
       <div className="border-t border-sidebar-border p-3">
@@ -71,6 +130,98 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           Log out
         </Button>
       </div>
+    </div>
+  )
+}
+
+interface ConversationItemProps {
+  id: string
+  title: string | null
+  isActive: boolean
+  onNavigate?: () => void
+}
+
+// Split out so each row owns its own delete-confirm dialog state independently
+// of its siblings (opening one row's dialog must not affect any other row).
+function ConversationItem({ id, title, isActive, onNavigate }: ConversationItemProps) {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false)
+  const navigate = useNavigate()
+  const deleteConversation = useDeleteConversation()
+
+  const displayTitle = title ?? "New conversation"
+
+  async function handleConfirmDelete() {
+    try {
+      await deleteConversation.mutateAsync(id)
+      toast.success("Conversation deleted.")
+      setIsConfirmOpen(false)
+      // The conversation the user is currently viewing was just removed —
+      // navigating away avoids showing a dead thread for a now-gone id.
+      if (isActive) {
+        navigate("/chat")
+      }
+    } catch (error) {
+      if (error instanceof DeleteError && error.status === 404) {
+        toast.info("This conversation was already removed.")
+        setIsConfirmOpen(false)
+        if (isActive) navigate("/chat")
+        return
+      }
+      toast.error("Failed to delete conversation. Please try again.")
+    }
+  }
+
+  return (
+    <div className="group/item relative">
+      <NavLink
+        to={`/chat/${id}`}
+        onClick={onNavigate}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-3 py-2 pr-8 text-sm transition-colors",
+          "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
+          isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        )}
+      >
+        <span className="truncate" title={displayTitle}>
+          {displayTitle}
+        </span>
+      </NavLink>
+
+      <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Delete ${displayTitle}`}
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/item:opacity-100"
+          onClick={() => setIsConfirmOpen(true)}
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </Button>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this conversation?</DialogTitle>
+            <DialogDescription>
+              This removes &ldquo;{displayTitle}&rdquo; and its messages. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmDelete()}
+              disabled={deleteConversation.isPending}
+            >
+              {deleteConversation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

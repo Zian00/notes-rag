@@ -65,6 +65,10 @@ describe("AppRoutes", () => {
         HttpResponse.json({ access_token: "login-token", token_type: "bearer" }),
       ),
       http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
+      // Task 12: ChatPage now renders a real thread (backed by useConversations
+      // for the sidebar) instead of a placeholder — an empty list keeps this
+      // test focused on routing/auth, not chat content.
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json([])),
     )
 
     const user = userEvent.setup()
@@ -75,7 +79,7 @@ describe("AppRoutes", () => {
     await user.type(screen.getByLabelText(/password/i), "password123")
     await user.click(screen.getByRole("button", { name: /log in/i }))
 
-    expect(await screen.findByText(/coming in milestone c/i)).toBeInTheDocument()
+    expect(await screen.findByText(/ask something about your notes/i)).toBeInTheDocument()
     expect(screen.getByText(mockUser.email)).toBeInTheDocument()
   })
 
@@ -86,12 +90,14 @@ describe("AppRoutes", () => {
       ),
       http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
       http.post(`${API_BASE}/auth/logout`, () => HttpResponse.json({ detail: "logged out" })),
+      // See the comment in the test above — Task 12 replaced ChatPage's placeholder.
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json([])),
     )
 
     const user = userEvent.setup()
     renderWithProviders(["/chat"])
 
-    await screen.findByText(/coming in milestone c/i)
+    await screen.findByText(/ask something about your notes/i)
     await user.click(screen.getByRole("button", { name: /log out/i }))
 
     expect(await screen.findByRole("heading", { name: /log in/i })).toBeInTheDocument()

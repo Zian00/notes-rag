@@ -12,6 +12,10 @@ const RAW_BASE = import.meta.env.VITE_API_BASE ?? "/api"
 // Resolving against window.location.origin keeps the relative "/api" config
 // (needed for the dev-server proxy) working in both the browser and tests.
 const BASE = new URL(RAW_BASE, window.location.origin).toString().replace(/\/$/, "")
+// Exported so other modules that need to issue a raw `fetch` (e.g. the SSE
+// chat stream reader, which can't use openapi-fetch) resolve the same
+// absolute base instead of re-deriving it and risking drift.
+export const API_BASE = BASE
 
 // Access token lives in memory only (never localStorage/sessionStorage) so it
 // can't be read by an XSS payload; the refresh token is an httpOnly cookie
