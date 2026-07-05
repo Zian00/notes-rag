@@ -37,6 +37,20 @@ async def test_login_sets_cookie_and_returns_access(client):
 
 
 @pytest.mark.asyncio
+async def test_login_cookie_scoped_to_root_path(client):
+    # The refresh cookie must be scoped to Path=/ (not /auth). In dev the browser
+    # reaches the API through the Vite /api proxy, so it only ever sees paths like
+    # /api/auth/refresh — a cookie scoped to /auth would never match and the browser
+    # would drop it, silently logging the user out on every reload.
+    email = _email()
+    await client.post("/auth/register", json={"email": email, "password": "password123"})
+
+    r = await client.post("/auth/login", json={"email": email, "password": "password123"})
+    set_cookie = r.headers["set-cookie"].lower()
+    assert "path=/;" in set_cookie or set_cookie.rstrip().endswith("path=/")
+
+
+@pytest.mark.asyncio
 async def test_login_bad_credentials(client):
     email = _email()
     await client.post("/auth/register", json={"email": email, "password": "password123"})

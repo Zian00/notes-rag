@@ -14,7 +14,11 @@ from app.services.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
-_COOKIE_PATH = "/auth"
+# Scope to root, not "/auth": the browser reaches the API through the frontend's
+# /api proxy, so it only ever sees paths like /api/auth/refresh. A cookie scoped
+# to /auth would never path-match those requests, so the browser would drop it and
+# every page reload would silently log the user out.
+_COOKIE_PATH = "/"
 
 
 def _set_refresh_cookie(response: Response, raw: str) -> None:
