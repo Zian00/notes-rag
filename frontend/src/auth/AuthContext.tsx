@@ -65,6 +65,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setAccessToken(null)
       setUser(null)
       setStatus("anon")
+      // Symmetric with logout(): this is also a "session ends" transition, so
+      // drop cached documents/conversations to avoid stale, unauthorized data
+      // flashing in for the next login.
+      queryClient.clear()
     })
   }, [])
 

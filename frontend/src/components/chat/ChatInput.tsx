@@ -13,6 +13,12 @@ interface ChatInputProps {
   onStop: () => void
 }
 
+// Backend's documented top_k range (see ChatRequest schema) — values outside
+// this are rejected server-side, so out-of-range input is clamped client-side
+// before it's ever sent rather than surfacing a 422 round-trip.
+const TOP_K_MIN = 1
+const TOP_K_MAX = 20
+
 export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
   const [value, setValue] = useState("")
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
@@ -34,11 +40,19 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
     const parsedTopK = topK.trim().length > 0 ? Number(topK) : undefined
+    // Non-integer/NaN input is dropped (falls back to the backend's own default)
+    // rather than sending a value the API would reject; in-range integers are
+    // clamped defensively even though the `min`/`max` input attrs already
+    // discourage out-of-range typing.
+    const validTopK =
+      parsedTopK !== undefined && Number.isInteger(parsedTopK)
+        ? Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, parsedTopK))
+        : undefined
 
     onSend(value, {
       course: course.trim() || undefined,
       tags: parsedTags.length > 0 ? parsedTags : undefined,
-      topK: parsedTopK !== undefined && !Number.isNaN(parsedTopK) ? parsedTopK : undefined,
+      topK: validTopK,
     })
     setValue("")
   }
@@ -79,7 +93,15 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor={topKId}>Top K</Label>
-              <Input id={topKId} type="number" min={1} value={topK} onChange={(event) => setTopK(event.target.value)} placeholder="5" />
+              <Input
+                id={topKId}
+                type="number"
+                min={TOP_K_MIN}
+                max={TOP_K_MAX}
+                value={topK}
+                onChange={(event) => setTopK(event.target.value)}
+                placeholder="5"
+              />
             </div>
           </div>
         )}
@@ -94,7 +116,6 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask something about your notes…"
-            disabled={isStreaming}
             className="max-h-40 flex-1 resize-none"
             rows={1}
           />

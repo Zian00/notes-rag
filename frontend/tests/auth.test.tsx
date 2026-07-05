@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import { server } from "./msw/server"
 import { setAccessToken } from "@/api/client"
+import * as client from "@/api/client"
 import { AuthError } from "@/api/authError"
 import { AuthProvider } from "@/auth/AuthContext"
 import { useAuth } from "@/auth/useAuth"
+import { queryClient as singletonQueryClient } from "@/lib/queryClient"
 
 // client.ts resolves its relative "/api" base against window.location.origin —
 // derive the test base the same way so the two can't drift (see tests/client.test.ts).
@@ -51,6 +53,14 @@ describe("AuthContext", () => {
   beforeEach(() => {
     // Reset the module-level in-memory token so tests don't leak state into each other.
     setAccessToken(null)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    // The onAuthFailure cache-clear test seeds the real singleton queryClient
+    // (shared across the whole test file/process) — clear it so it can't leak
+    // cached data into unrelated tests.
+    singletonQueryClient.clear()
   })
 
   it("on-mount silent refresh success -> authed", async () => {
@@ -111,6 +121,37 @@ describe("AuthContext", () => {
 
     expect(await screen.findByTestId("status")).toHaveTextContent("anon")
     expect(screen.getByTestId("user-email")).toHaveTextContent("none")
+  })
+
+  it("onAuthFailure (mid-session silent-refresh failure) clears to anon AND clears the query cache", async () => {
+    server.use(
+      http.post(`${API_BASE}/auth/refresh`, () =>
+        HttpResponse.json({ access_token: "t", token_type: "bearer" }),
+      ),
+      http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
+    )
+
+    // Capture the real handler AuthProvider registers (client.ts's middleware
+    // calls this exact callback on an unrecoverable 401) so it can be invoked
+    // directly, the same way a later mid-session request would trigger it.
+    let capturedHandler: (() => void) | undefined
+    vi.spyOn(client, "setOnAuthFailure").mockImplementation((fn) => {
+      capturedHandler = fn
+    })
+
+    renderWithProviders()
+    expect(await screen.findByTestId("status")).toHaveTextContent("authed")
+
+    // Seed the module-level singleton queryClient (the one AuthContext's
+    // onAuthFailure callback calls .clear() on) with cached data so we can
+    // assert it's gone afterwards — parity with logout()'s existing clear.
+    singletonQueryClient.setQueryData(["probe"], { stale: true })
+    expect(singletonQueryClient.getQueryData(["probe"])).toEqual({ stale: true })
+
+    capturedHandler?.()
+
+    expect(await screen.findByTestId("status")).toHaveTextContent("anon")
+    expect(singletonQueryClient.getQueryData(["probe"])).toBeUndefined()
   })
 
   it("register success -> auto-login -> authed", async () => {

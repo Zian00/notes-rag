@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { useConversations, useDeleteConversation } from "@/api/hooks/useConversations"
 import { DeleteError } from "@/api/deleteError"
+import { ThemeToggle } from "@/components/layout/ThemeToggle"
 
 const NAV_ITEMS = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
@@ -39,15 +40,14 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   }
 
   function handleNewChat() {
-    // Always navigate to bare /chat. ChatPage's useChat is keyed off the
-    // conversationId route param, so navigating away from an existing
-    // conversation naturally starts a fresh (empty) live session via its
-    // reset-guard effect; if the user was already at bare /chat, this is a
-    // route no-op, but that's fine — /chat with no messages sent is already
-    // an empty thread, so there's nothing to clear. Deliberately not calling
-    // ChatPage's `reset()` here since it isn't available at this layer (the
-    // Sidebar and ChatPage don't share a useChat instance).
-    navigate("/chat")
+    // Navigating to bare /chat is a route no-op when already there (e.g. a
+    // lingering live thread from a pre-`meta` error), so a fresh nonce is
+    // stamped into location.state on every click. ChatPage watches this value
+    // (not just the route param) and calls its own `reset()` whenever it
+    // changes — including when the pathname didn't. Sidebar and ChatPage
+    // don't share a useChat instance, so this state-based signal is how the
+    // click reaches ChatPage's hook without lifting state up.
+    navigate("/chat", { state: { newChatNonce: crypto.randomUUID() } })
     onNavigate?.()
   }
 
@@ -119,11 +119,12 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <p className="truncate px-3 pb-2 text-xs text-sidebar-foreground/70" title={user?.email}>
           {user?.email}
         </p>
+        <ThemeToggle />
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="w-full justify-start gap-2 text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          className="mt-1 w-full justify-start gap-2 text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           onClick={() => void handleLogout()}
         >
           <LogOut className="size-4" aria-hidden="true" />

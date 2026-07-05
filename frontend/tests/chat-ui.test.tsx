@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { http, HttpResponse } from "msw"
 import type { ReactNode } from "react"
+import { ThemeProvider } from "next-themes"
 import { server } from "./msw/server"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/auth/AuthContext"
@@ -88,12 +89,14 @@ function renderApp(initialEntries: string[]) {
   }
   return render(
     <Wrapper>
-      <AuthProvider>
-        <MemoryRouter initialEntries={initialEntries}>
-          <AppRoutes />
-        </MemoryRouter>
-        <Toaster />
-      </AuthProvider>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <AuthProvider>
+          <MemoryRouter initialEntries={initialEntries}>
+            <AppRoutes />
+          </MemoryRouter>
+          <Toaster />
+        </AuthProvider>
+      </ThemeProvider>
     </Wrapper>,
   )
 }
@@ -203,6 +206,143 @@ describe("ChatPage", () => {
       (_, element) => element?.tagName === "P" && element.textContent === "line one\nline two",
     )
     expect(userBubble).toBeInTheDocument()
+  })
+
+  it("allows typing while streaming but blocks Enter from sending until it finishes", async () => {
+    mockAuthed()
+    // Never resolves on its own — the test controls when "done" fires via `release`,
+    // so streaming stays in progress while asserting Enter is blocked mid-stream.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockStreamChat.mockImplementation(async function* (): AsyncGenerator<ChatFrame> {
+      yield { event: "meta", data: { conversation_id: "convo-new" } }
+      yield { event: "token", data: { delta: "partial" } }
+      await gate
+      yield { event: "done", data: {} }
+    })
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "first question")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // Streaming is now in progress — Stop replaces Send, and the textarea must
+    // stay editable (Task 13 item 2) even though sending itself is blocked.
+    expect(await screen.findByRole("button", { name: /^stop$/i })).toBeInTheDocument()
+    expect(textbox).not.toBeDisabled()
+
+    await user.type(textbox, "typed mid-stream")
+    expect((textbox as HTMLTextAreaElement).value).toBe("typed mid-stream")
+
+    // Enter must not call onSend while isStreaming is true — mockStreamChat is
+    // only ever invoked once for this test if the guard holds.
+    await user.keyboard("{Enter}")
+    expect(mockStreamChat).toHaveBeenCalledTimes(1)
+
+    release()
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeInTheDocument())
+  })
+
+  it("new chat while already at bare /chat clears a lingering thread", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "error", data: { detail: "boom" } },
+      ]),
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "question that errors")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // The mocked stream never sends a `meta` frame, so onConversationCreated
+    // never fires and the URL stays at bare /chat — this is the "lingering
+    // thread from a pre-meta error" scenario Task 13 item 5 targets.
+    await screen.findByText("question that errors")
+
+    await user.click(screen.getByRole("button", { name: /new chat/i }))
+
+    expect(screen.queryByText("question that errors")).not.toBeInTheDocument()
+    expect(await screen.findByText(/ask something about your notes/i)).toBeInTheDocument()
+  })
+})
+
+describe("AppShell mobile drawer", () => {
+  it("closes on Escape", async () => {
+    mockAuthed()
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await screen.findByText(/ask something about your notes/i)
+
+    const openButton = screen.getByRole("button", { name: /open navigation/i })
+    await user.click(openButton)
+    // Two "Close navigation" controls exist while the drawer is open (the full-
+    // screen backdrop button and the header toggle) — getAllBy* is deliberate.
+    expect(await screen.findAllByRole("button", { name: /close navigation/i })).toHaveLength(2)
+
+    await user.keyboard("{Escape}")
+
+    expect(screen.queryAllByRole("button", { name: /close navigation/i })).toHaveLength(0)
+    expect(screen.getByRole("button", { name: /open navigation/i })).toBeInTheDocument()
+  })
+})
+
+describe("ChatInput top_k clamp", () => {
+  it("clamps an out-of-range top_k before sending", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "done", data: {} },
+      ]),
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await screen.findByText(/ask something about your notes/i)
+
+    await user.click(screen.getByRole("button", { name: /filters/i }))
+    const topKInput = screen.getByLabelText(/top k/i)
+    await user.clear(topKInput)
+    await user.type(topKInput, "999")
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "clamp check")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1))
+    const [requestBody] = mockStreamChat.mock.calls[0]
+    expect(requestBody.top_k).toBe(20)
+  })
+})
+
+describe("Theme toggle", () => {
+  it("renders in the Sidebar footer and switching to dark applies the .dark class", async () => {
+    mockAuthed()
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await screen.findByText(/ask something about your notes/i)
+
+    const trigger = screen.getByRole("button", { name: /theme:/i })
+    await user.click(trigger)
+    await user.click(await screen.findByRole("menuitem", { name: /^dark$/i }))
+
+    await waitFor(() => expect(document.documentElement.classList.contains("dark")).toBe(true))
+
+    await user.click(screen.getByRole("button", { name: /theme:/i }))
+    await user.click(await screen.findByRole("menuitem", { name: /^light$/i }))
+
+    await waitFor(() => expect(document.documentElement.classList.contains("dark")).toBe(false))
   })
 })
 

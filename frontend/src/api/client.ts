@@ -33,6 +33,12 @@ export const setOnAuthFailure = (fn: () => void) => {
   onAuthFailure = fn
 }
 
+// Lets non-middleware callers (chatStream's manual 401 path) trigger the same
+// session-teardown as the openapi-fetch middleware does on an unrecoverable 401.
+export function notifyAuthFailure(): void {
+  onAuthFailure()
+}
+
 // Hits /auth/refresh (httpOnly cookie sent via credentials:"include"); stores the new access token.
 async function refreshAccessToken(): Promise<boolean> {
   const res = await fetch(`${BASE}/auth/refresh`, { method: "POST", credentials: "include" })

@@ -84,7 +84,7 @@ export function DocumentRow({ document }: DocumentRowProps) {
             <Button
               type="button"
               variant="destructive"
-              onClick={handleConfirmDelete}
+              onClick={() => void handleConfirmDelete()}
               disabled={deleteDocument.isPending}
             >
               {deleteDocument.isPending ? "Deleting…" : "Delete"}

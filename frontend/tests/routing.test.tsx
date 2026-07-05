@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { http, HttpResponse } from "msw"
+import { ThemeProvider } from "next-themes"
 import { server } from "./msw/server"
 import { setAccessToken } from "@/api/client"
 import { AuthProvider } from "@/auth/AuthContext"
@@ -35,13 +36,15 @@ function renderWithProviders(initialEntries: string[], { withLocationSpy = false
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={initialEntries}>
-          {withLocationSpy && <LocationSpy />}
-          <AppRoutes />
-        </MemoryRouter>
-        <Toaster />
-      </AuthProvider>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <AuthProvider>
+          <MemoryRouter initialEntries={initialEntries}>
+            {withLocationSpy && <LocationSpy />}
+            <AppRoutes />
+          </MemoryRouter>
+          <Toaster />
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>,
   )
 }

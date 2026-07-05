@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { MessageList } from "@/components/chat/MessageList"
 import { ChatInput } from "@/components/chat/ChatInput"
 import { useChat, type ChatMessage } from "@/api/hooks/useChat"
@@ -15,10 +15,11 @@ function isRenderableRole(role: string): role is ChatMessage["role"] {
 export function ChatPage() {
   const { conversationId } = useParams<{ conversationId?: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const conversationQuery = useConversation(conversationId)
 
-  const { messages, isStreaming, send, stop, seed } = useChat({
+  const { messages, isStreaming, send, stop, seed, reset } = useChat({
     conversationId,
     // A brand-new chat's first `meta` frame reports the id the backend just
     // created — reflect it in the URL so reload/sharing/back-button all work,
@@ -33,6 +34,24 @@ export function ChatPage() {
   // needing a fresh seed attempt even though conversationQuery.data may not
   // have arrived yet on the render where the id first changes.
   const seededConversationIdRef = useRef<string | undefined>(undefined)
+
+  // Sidebar's "New chat" stamps a fresh nonce into location.state on every
+  // click (see Sidebar.tsx) specifically so this fires even when navigating
+  // to bare /chat is a route no-op (already there) — useChat's own route-param
+  // reset-guard effect only reacts to an actual conversationId change, so it
+  // can't clear a lingering live thread in that case on its own.
+  const newChatNonce = (location.state as { newChatNonce?: string } | null)?.newChatNonce
+  const seenNewChatNonceRef = useRef<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (newChatNonce === undefined) return
+    if (seenNewChatNonceRef.current === newChatNonce) return
+    seenNewChatNonceRef.current = newChatNonce
+    reset()
+    // A stale seed-guard would otherwise block re-seeding if the user opens
+    // the same conversation again later in this mount's lifetime.
+    seededConversationIdRef.current = undefined
+  }, [newChatNonce, reset])
 
   useEffect(() => {
     if (!conversationId) return

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Outlet } from "react-router-dom"
 import { Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,17 @@ import { Sidebar } from "@/components/layout/Sidebar"
 // once status === "authed", so children can assume a signed-in user exists.
 export function AppShell() {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+
+  // Esc-to-close is only wired up while the drawer is actually open, so it
+  // never intercepts Escape presses used elsewhere (e.g. closing a Dialog).
+  useEffect(() => {
+    if (!isMobileNavOpen) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsMobileNavOpen(false)
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [isMobileNavOpen])
 
   return (
     <div className="flex h-svh bg-background text-foreground">

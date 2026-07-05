@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { useAuth } from "@/auth/useAuth"
 import { AuthError } from "@/api/authError"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { EMAIL_PATTERN } from "@/lib/validation"
@@ -80,9 +80,10 @@ export function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>
-            <h1 className="text-base font-medium">Log in</h1>
-          </CardTitle>
+          {/* Renders the card's title directly as the page's single <h1> (skipping
+              CardTitle's own div wrapper) instead of nesting a heading inside a
+              non-semantic title element — CardTitle doesn't support `asChild`. */}
+          <h1 className="font-heading text-base leading-snug font-medium">Log in</h1>
           <CardDescription>Sign in to your Notes RAG account.</CardDescription>
         </CardHeader>
         <CardContent>

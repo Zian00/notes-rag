@@ -154,6 +154,17 @@ describe("streamChat", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
 
+  it("triggers the auth-failure hook (and still throws) when the post-401 refresh fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 401 }))
+    vi.spyOn(client, "refreshAccessToken").mockResolvedValueOnce(false)
+
+    const onAuthFailure = vi.fn()
+    client.setOnAuthFailure(onAuthFailure)
+
+    await expect(collect(streamChat({ question: "hi" }))).rejects.toThrow(/401/)
+    expect(onAuthFailure).toHaveBeenCalledTimes(1)
+  })
+
   it("throws on a non-ok, non-401 response (e.g. 404 for a bad conversation id)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 404 }))
 

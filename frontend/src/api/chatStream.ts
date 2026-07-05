@@ -1,4 +1,4 @@
-import { API_BASE, getAccessToken, refreshAccessToken } from "./client"
+import { API_BASE, getAccessToken, notifyAuthFailure, refreshAccessToken } from "./client"
 import type { components } from "./schema"
 
 // The generated OpenAPI schema doesn't surface a `Citation` schema (the
@@ -43,6 +43,12 @@ export async function* streamChat(
     const refreshed = await refreshAccessToken()
     if (refreshed) {
       res = await postChat(body, signal)
+    } else {
+      // Refresh failed (refresh cookie missing/expired) — session is
+      // unrecoverable. Mirror the openapi-fetch middleware's behavior
+      // (client.ts) so chatStream's 401 path clears the session + redirects
+      // to /login instead of leaving the user "authed" with a dead session.
+      notifyAuthFailure()
     }
   }
 
