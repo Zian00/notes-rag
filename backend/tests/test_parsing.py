@@ -65,6 +65,24 @@ def test_docx_parser_extracts_text():
     assert "first para" in joined and "second para" in joined
 
 
+def test_docx_nested_headings_produce_breadcrumb_sections():
+    doc = DocxDocument()
+    doc.add_heading("Lecture 4", level=1)
+    doc.add_paragraph("Intro text.")
+    doc.add_heading("Neural Networks", level=2)
+    doc.add_paragraph("Body about neurons.")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    parsed = DocxParser().parse(
+        buf.getvalue(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    sections = [s.section for s in parsed.segments]
+    assert "Lecture 4" in sections
+    assert "Lecture 4 > Neural Networks" in sections
+
+
 def test_image_parser_uses_ocr():
     img = Image.new("RGB", (40, 20), "white")
     buf = io.BytesIO()

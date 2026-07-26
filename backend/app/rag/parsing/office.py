@@ -1,9 +1,14 @@
 import io
+import re
 
 from docx import Document as DocxDocument
 from pptx import Presentation
 
 from app.rag.types import ParsedDocument, Segment
+
+# Matches Word paragraph style names like "Heading 1", "Heading 2" (case-insensitive,
+# optional whitespace before the digit) to extract the heading level.
+_HEADING_STYLE_RE = re.compile(r"heading\s*(\d+)", re.IGNORECASE)
 
 
 class PptxParser:
@@ -37,27 +42,40 @@ class PptxParser:
 
 
 class DocxParser:
-    """Segments split on heading-styled paragraphs; else a single segment."""
+    """Segments split on heading-styled paragraphs, with a '>'-joined breadcrumb
+    `section` for nested heading levels (mirrors heading_split.py's approach, but
+    the level signal here is the paragraph's Word STYLE, e.g. 'Heading 2', not a
+    '#' count)."""
 
     def parse(self, data: bytes, content_type: str) -> ParsedDocument:
         doc = DocxDocument(io.BytesIO(data))
         segments: list[Segment] = []
-        current_heading: str | None = None
+        # Stack of (level, heading_text). A new heading pops any stack entries at
+        # the same or deeper level before being pushed, so the stack always reflects
+        # the current breadcrumb path (e.g. [(1, "Lecture 4"), (2, "Neural Networks")]).
+        heading_stack: list[tuple[int, str]] = []
         buffer: list[str] = []
+
+        def breadcrumb() -> str | None:
+            return " > ".join(h[1] for h in heading_stack) or None
 
         def flush() -> None:
             body = "\n".join(buffer).strip()
-            if body or current_heading:
-                segments.append(Segment(text=body, section=current_heading))
+            if body or heading_stack:
+                segments.append(Segment(text=body, section=breadcrumb()))
 
         # Same flush-on-heading pattern as Markdown, but here "heading" is a Word paragraph
         # STYLE (e.g. "Heading 1"), not a '#'. Word has no fixed page count, so page_count=None.
         for para in doc.paragraphs:
-            style = (para.style.name or "").lower() if para.style else ""
-            if style.startswith("heading") and para.text.strip():
+            style = (para.style.name or "") if para.style else ""
+            match = _HEADING_STYLE_RE.match(style.strip())
+            if match and para.text.strip():
                 flush()
                 buffer = []
-                current_heading = para.text.strip()
+                level = int(match.group(1))
+                while heading_stack and heading_stack[-1][0] >= level:
+                    heading_stack.pop()
+                heading_stack.append((level, para.text.strip()))
             elif para.text.strip():
                 buffer.append(para.text)
         flush()
