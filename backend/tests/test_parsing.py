@@ -122,6 +122,22 @@ def test_pdf_parser_falls_back_to_ocr_for_image_only_page():
     assert "FALLBACK TEXT" in text
 
 
+def test_pdf_headings_produce_breadcrumb_sections():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Lecture 4", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=11)
+    pdf.cell(0, 10, "Intro text about the lecture.", new_x="LMARGIN", new_y="NEXT")
+    data = pdf.output()
+
+    parser = PdfParser(ocr=FakeOcrProvider(), ocr_enabled=True, min_chars=5)
+    parsed = parser.parse(bytes(data), "application/pdf")
+
+    assert parsed.page_count == 1
+    assert any(s.section for s in parsed.segments)  # at least one heading detected
+
+
 def test_dispatcher_routes_by_content_type():
     dispatcher = ParserDispatcher(ocr=FakeOcrProvider(), ocr_enabled=True, min_chars=5)
     doc = dispatcher.parse(b"plain words", "text/plain")
