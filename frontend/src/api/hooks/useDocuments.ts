@@ -31,7 +31,18 @@ export interface UploadDocumentInput {
 // Lists documents, optionally scoped to a course. Thin wrapper over openapi-react-query
 // so callers don't need to know the ("get", "/documents", { params }) call shape.
 export function useDocuments(course?: string): UseQueryResult<DocumentResponse[], unknown> {
-  return $api.useQuery("get", "/documents", { params: { query: { course } } })
+  return $api.useQuery("get", "/documents", {
+    params: { query: { course } },
+  }, {
+    // Keep polling while anything is still processing, so the list flips to
+    // ready/failed on its own without the user manually refreshing. No interval
+    // once everything has settled (pending/processing gone) — avoids polling forever.
+    refetchInterval: (query) => {
+      const docs = query.state.data
+      const stillWorking = docs?.some((d) => d.status === "pending" || d.status === "processing")
+      return stillWorking ? 2000 : false
+    },
+  })
 }
 
 // Uploads a document via multipart/form-data and invalidates the documents list on success.

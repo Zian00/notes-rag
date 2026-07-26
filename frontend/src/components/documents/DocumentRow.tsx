@@ -50,6 +50,17 @@ export function DocumentRow({ document }: DocumentRowProps) {
     <li className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-accent/40">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{displayName}</p>
+        {document.status !== "ready" && (
+          <p
+            className={
+              document.status === "failed" ? "mt-0.5 text-sm text-destructive" : "mt-0.5 text-sm text-muted-foreground"
+            }
+          >
+            {document.status === "failed"
+              ? `Failed: ${document.error_message ?? "Unknown error"}`
+              : "Processing…"}
+          </p>
+        )}
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           {document.course && <Badge variant="secondary">{document.course}</Badge>}
           <span>{document.chunk_count} chunks</span>

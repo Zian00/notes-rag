@@ -23,6 +23,8 @@ const doc1: DocumentResponse = {
   content_type: "application/pdf",
   page_count: 3,
   chunk_count: 10,
+  status: "ready",
+  error_message: null,
   file_size: 1024,
   embedding_model: "test-model",
   embedding_dimension: 384,
@@ -35,6 +37,8 @@ const doc2: DocumentResponse = {
   id: "22222222-2222-2222-2222-222222222222",
   filename: "notes2.pdf",
   title: "Notes 2",
+  status: "ready",
+  error_message: null,
 }
 
 // Renders DocumentsPage under a fresh QueryClient + the real Toaster (sonner) so

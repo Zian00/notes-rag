@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react"
+import { render, renderHook, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import type { ReactNode } from "react"
@@ -6,6 +6,7 @@ import { server } from "./msw/server"
 import { useDocuments, useUploadDocument, useDeleteDocument } from "@/api/hooks/useDocuments"
 import { UploadError } from "@/api/uploadError"
 import { DeleteError } from "@/api/deleteError"
+import { DocumentList } from "@/components/documents/DocumentList"
 import type { components } from "@/api/schema"
 
 // client.ts resolves its relative "/api" base against window.location.origin —
@@ -23,6 +24,8 @@ const doc1: DocumentResponse = {
   content_type: "application/pdf",
   page_count: 3,
   chunk_count: 10,
+  status: "ready",
+  error_message: null,
   file_size: 1024,
   embedding_model: "test-model",
   embedding_dimension: 384,
@@ -35,6 +38,8 @@ const doc2: DocumentResponse = {
   id: "22222222-2222-2222-2222-222222222222",
   filename: "notes2.pdf",
   title: "Notes 2",
+  status: "ready",
+  error_message: null,
 }
 
 // Fresh QueryClient per test so cache state can't leak between tests (retry
@@ -47,6 +52,17 @@ function createWrapper() {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   }
   return Wrapper
+}
+
+// Providers wrapper for component render tests (matches the pattern used in documents-ui.test.tsx).
+function createProviders() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  function Providers({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+  return Providers
 }
 
 describe("useDocuments", () => {
@@ -74,6 +90,23 @@ describe("useDocuments", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
     expect(capturedCourse).toBe("cs101")
     expect(result.current.data).toEqual([doc1])
+  })
+
+  it("shows a processing badge for a pending document and a failed badge with the error for a failed one", async () => {
+    server.use(
+      http.get(`${API_BASE}/documents`, () =>
+        HttpResponse.json([
+          { ...doc1, id: "1", filename: "a.pdf", status: "pending", error_message: null },
+          { ...doc2, id: "2", filename: "b.pdf", status: "failed", error_message: "Embedding API down" },
+        ]),
+      ),
+    )
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    expect(await screen.findByText(/processing/i)).toBeInTheDocument()
+    expect(await screen.findByText(/failed/i)).toBeInTheDocument()
+    expect(await screen.findByText(/embedding api down/i)).toBeInTheDocument()
   })
 })
 
