@@ -12,6 +12,9 @@ class StorageBackend(ABC):
     def save(self, user_id: uuid.UUID, filename: str, data: bytes) -> str: ...
 
     @abstractmethod
+    def read(self, path: str) -> bytes: ...
+
+    @abstractmethod
     def delete(self, path: str) -> None: ...
 
 
@@ -28,6 +31,9 @@ class LocalFileStorage(StorageBackend):
         dest = user_dir / f"{uuid.uuid4().hex}_{safe}"
         dest.write_bytes(data)
         return str(dest)
+
+    def read(self, path: str) -> bytes:
+        return Path(path).read_bytes()
 
     def delete(self, path: str) -> None:
         Path(path).unlink(missing_ok=True)
