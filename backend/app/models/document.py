@@ -55,6 +55,7 @@ class DocumentChunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(512), nullable=True)

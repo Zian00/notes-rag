@@ -1,3 +1,4 @@
+import hashlib
 import os
 from collections.abc import AsyncGenerator
 
@@ -33,6 +34,11 @@ TEST_DATABASE_URL = _test_database_url()
 
 # Tables whose rows are wiped between tests (NOT alembic_version).
 _TRUNCATE_TABLES = "users, refresh_tokens, documents, document_chunks, conversations"
+
+
+def hash_content(content: str) -> str:
+    """Helper to compute SHA-256 hash of chunk content for test fixtures."""
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 @pytest_asyncio.fixture

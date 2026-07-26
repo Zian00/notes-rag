@@ -123,6 +123,7 @@ class IngestionService:
                             user_id=document.user_id,
                             chunk_index=chunk.chunk_index,
                             content=chunk.content,
+                            content_hash=hashlib.sha256(chunk.content.encode()).hexdigest(),
                             token_count=chunk.token_count,
                             page_number=chunk.page_number,
                             section=chunk.section,

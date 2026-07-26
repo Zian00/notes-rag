@@ -112,3 +112,19 @@ async def test_process_marks_failed_and_reraises_on_embedding_error(db_session, 
     # The staged file itself is NOT deleted on a process() failure (unlike the old
     # ingest()'s cleanup) — the document row still exists and is retryable.
     assert Path(failed.storage_path).exists()  # noqa: ASYNC240
+
+
+@pytest.mark.asyncio
+async def test_process_stores_content_hash_per_chunk(db_session, tmp_path):
+    user = await _user(db_session)
+    storage = LocalFileStorage(str(tmp_path))
+    svc = _service(db_session, storage)
+    staged = await svc.stage(
+        user_id=user.id, filename="notes.txt", content_type="text/plain",
+        data=b"first paragraph of notes. second paragraph of notes.",
+    )
+
+    await svc.process(staged.id)
+
+    chunks = await ChunkRepository(db_session).list()
+    assert all(c.content_hash == hashlib.sha256(c.content.encode()).hexdigest() for c in chunks)

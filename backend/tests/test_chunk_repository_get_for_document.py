@@ -9,6 +9,7 @@ from app.db.repositories.user import UserRepository
 from app.models.document import Document
 from app.models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
+from tests.conftest import hash_content
 
 DIM = 1536
 
@@ -56,6 +57,7 @@ async def test_get_for_document_returns_chunks_in_order(db_session: AsyncSession
                 user_id=user.id,
                 chunk_index=2,
                 content="third",
+                content_hash=hash_content("third"),
                 embedding=_vec(2),
             ),
             dict(
@@ -63,6 +65,7 @@ async def test_get_for_document_returns_chunks_in_order(db_session: AsyncSession
                 user_id=user.id,
                 chunk_index=0,
                 content="first",
+                content_hash=hash_content("first"),
                 embedding=_vec(0),
             ),
             dict(
@@ -70,6 +73,7 @@ async def test_get_for_document_returns_chunks_in_order(db_session: AsyncSession
                 user_id=user.id,
                 chunk_index=1,
                 content="second",
+                content_hash=hash_content("second"),
                 embedding=_vec(1),
             ),
         ]
@@ -99,6 +103,7 @@ async def test_get_for_document_non_owner_returns_empty(db_session: AsyncSession
                 user_id=owner.id,
                 chunk_index=0,
                 content="secret",
+                content_hash=hash_content("secret"),
                 embedding=_vec(0),
             )
         ]
@@ -123,6 +128,7 @@ async def test_get_for_document_two_docs_isolated(db_session: AsyncSession) -> N
                 user_id=user.id,
                 chunk_index=0,
                 content="doc-a chunk",
+                content_hash=hash_content("doc-a chunk"),
                 embedding=_vec(0),
             )
         ]
@@ -134,6 +140,7 @@ async def test_get_for_document_two_docs_isolated(db_session: AsyncSession) -> N
                 user_id=user.id,
                 chunk_index=0,
                 content="doc-b chunk",
+                content_hash=hash_content("doc-b chunk"),
                 embedding=_vec(1),
             )
         ]

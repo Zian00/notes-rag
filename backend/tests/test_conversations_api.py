@@ -20,6 +20,7 @@ from app.rag.graph.nodes import Grade
 from httpx import AsyncClient
 from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from tests.conftest import hash_content
 
 DIM = 1536
 
@@ -51,6 +52,7 @@ async def _seed_doc(session: AsyncSession, user_id: uuid.UUID) -> None:
                 "user_id": user_id,
                 "chunk_index": 0,
                 "content": "heap is a tree-based structure",
+                "content_hash": hash_content("heap is a tree-based structure"),
                 "embedding": _vec(0),
             }
         ]

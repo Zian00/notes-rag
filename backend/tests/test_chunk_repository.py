@@ -4,6 +4,7 @@ import pytest
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
+from tests.conftest import hash_content
 
 DIM = 1536
 
@@ -42,9 +43,9 @@ async def test_add_many_and_search_orders_by_similarity(db_session):
     await repo.add_many(
         [
             dict(document_id=doc.id, user_id=user.id, chunk_index=0,
-                 content="far", embedding=_vec(5)),
+                 content="far", content_hash=hash_content("far"), embedding=_vec(5)),
             dict(document_id=doc.id, user_id=user.id, chunk_index=1,
-                 content="near", embedding=_vec(0)),
+                 content="near", content_hash=hash_content("near"), embedding=_vec(0)),
         ]
     )
     await db_session.commit()
@@ -63,7 +64,7 @@ async def test_search_is_scoped_to_user(db_session):
     repo = ChunkRepository(db_session)
     await repo.add_many(
         [dict(document_id=doc_b.id, user_id=user_b.id, chunk_index=0,
-              content="b-only", embedding=_vec(0))]
+              content="b-only", content_hash=hash_content("b-only"), embedding=_vec(0))]
     )
     await db_session.commit()
     results = await repo.search_similar(user_a.id, _vec(0), top_k=5)
@@ -76,7 +77,7 @@ async def test_search_filters_by_course(db_session):
     repo = ChunkRepository(db_session)
     await repo.add_many(
         [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
-              content="bio chunk", embedding=_vec(0))]
+              content="bio chunk", content_hash=hash_content("bio chunk"), embedding=_vec(0))]
     )
     await db_session.commit()
     assert len(await repo.search_similar(user.id, _vec(0), top_k=5, course="BIO")) == 1

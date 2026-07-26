@@ -17,6 +17,7 @@ from app.models.user import User
 from app.rag.graph.tools import build_tools, format_chunks_for_llm
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from tests.conftest import hash_content
 from tests.fakes import FakeEmbeddingsProvider
 
 DIM = 1536
@@ -72,6 +73,7 @@ async def _add_chunks(
                 "user_id": user.id,
                 "chunk_index": i,
                 "content": t,
+                "content_hash": hash_content(t),
                 "embedding": _vec(i),
             }
             for i, t in enumerate(texts)
@@ -203,11 +205,11 @@ async def test_get_document_content_ordered(_engine: AsyncEngine) -> None:
         await repo.add_many(
             [
                 {"document_id": doc.id, "user_id": user.id, "chunk_index": 2, "content": "C",
-                 "embedding": _vec(2)},
+                 "content_hash": hash_content("C"), "embedding": _vec(2)},
                 {"document_id": doc.id, "user_id": user.id, "chunk_index": 0, "content": "A",
-                 "embedding": _vec(0)},
+                 "content_hash": hash_content("A"), "embedding": _vec(0)},
                 {"document_id": doc.id, "user_id": user.id, "chunk_index": 1, "content": "B",
-                 "embedding": _vec(1)},
+                 "content_hash": hash_content("B"), "embedding": _vec(1)},
             ]
         )
         await session.commit()
@@ -239,6 +241,7 @@ async def test_get_document_content_non_owner_empty(_engine: AsyncEngine) -> Non
                     "user_id": owner.id,
                     "chunk_index": 0,
                     "content": "private",
+                    "content_hash": hash_content("private"),
                     "embedding": _vec(0),
                 }
             ]

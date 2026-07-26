@@ -6,6 +6,7 @@ from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.services.retrieval import RetrievalService
 
+from tests.conftest import hash_content
 from tests.fakes import FakeEmbeddingsProvider
 
 DIM = 1536
@@ -30,7 +31,7 @@ async def test_search_embeds_query_and_returns_matches(db_session):
     # FakeEmbeddingsProvider maps text -> one-hot at (len(text) % dim).
     await ChunkRepository(db_session).add_many(
         [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
-              content="abc", embedding=_vec(len("query!") % DIM))]
+              content="abc", content_hash=hash_content("abc"), embedding=_vec(len("query!") % DIM))]
     )
     await db_session.commit()
 
