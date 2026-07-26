@@ -34,6 +34,17 @@ class DuplicateDocumentResponse(BaseModel):
     document_id: UUID
 
 
+class ReplaceDocumentResponse(BaseModel):
+    """Response body for POST /documents/{id}/replace.
+
+    ``no_changes`` is True when the uploaded bytes hash-match the existing
+    document, in which case no background reprocessing job was enqueued.
+    """
+
+    document: DocumentResponse
+    no_changes: bool
+
+
 class SearchRequest(BaseModel):
     # min_length=1 rejects empty strings; top_k bounded 1–50 to prevent
     # overly large result sets that would balloon memory and latency.

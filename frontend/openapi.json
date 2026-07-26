@@ -348,6 +348,64 @@
         }
       }
     },
+    "/documents/{document_id}/replace": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Replace Document",
+        "operationId": "replace_document_documents__document_id__replace_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_replace_document_documents__document_id__replace_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplaceDocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/documents/{document_id}": {
       "delete": {
         "tags": [
@@ -603,6 +661,20 @@
   },
   "components": {
     "schemas": {
+      "Body_replace_document_documents__document_id__replace_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_replace_document_documents__document_id__replace_post"
+      },
       "Body_upload_document_documents_post": {
         "properties": {
           "file": {
@@ -1102,6 +1174,24 @@
           "password"
         ],
         "title": "RegisterRequest"
+      },
+      "ReplaceDocumentResponse": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentResponse"
+          },
+          "no_changes": {
+            "type": "boolean",
+            "title": "No Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document",
+          "no_changes"
+        ],
+        "title": "ReplaceDocumentResponse",
+        "description": "Response body for POST /documents/{id}/replace.\n\n``no_changes`` is True when the uploaded bytes hash-match the existing\ndocument, in which case no background reprocessing job was enqueued."
       },
       "SearchRequest": {
         "properties": {

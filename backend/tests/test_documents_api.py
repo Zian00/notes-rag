@@ -95,11 +95,76 @@ async def test_duplicate_upload_returns_409(auth_client):
     files = {"file": ("a.txt", data, "text/plain")}
     first = await auth_client.post("/documents", files=files)
     assert first.status_code == 201
-    again = await auth_client.post(
-        "/documents", files={"file": ("a.txt", data, "text/plain")}
-    )
+    again = await auth_client.post("/documents", files={"file": ("a.txt", data, "text/plain")})
     assert again.status_code == 409
     assert again.json()["document_id"] == first.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_replace_with_identical_content_short_circuits(auth_client):
+    upload = await auth_client.post(
+        "/documents",
+        files={"file": ("notes.txt", b"same content", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+
+    r = await auth_client.post(
+        f"/documents/{document_id}/replace",
+        files={"file": ("notes.txt", b"same content", "text/plain")},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["no_changes"] is True
+
+
+@pytest.mark.asyncio
+async def test_replace_with_new_content_enqueues_processing(auth_client):
+    from app.api import deps
+
+    enqueued: list[tuple] = []
+
+    async def fake_enqueue(document_id, new_storage_path, new_content_hash, new_file_size):
+        enqueued.append((str(document_id), new_content_hash))
+
+    auth_client.app.dependency_overrides[deps.get_enqueue_replace] = lambda: fake_enqueue
+
+    upload = await auth_client.post(
+        "/documents",
+        files={"file": ("notes.txt", b"original content", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+
+    r = await auth_client.post(
+        f"/documents/{document_id}/replace",
+        files={"file": ("notes.txt", b"changed content", "text/plain")},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["no_changes"] is False
+    assert len(enqueued) == 1
+    assert enqueued[0][0] == document_id
+
+    auth_client.app.dependency_overrides.pop(deps.get_enqueue_replace, None)
+
+
+@pytest.mark.asyncio
+async def test_replace_not_owned_returns_404(auth_client, client):
+    files = {"file": ("a.txt", b"owner content for replace", "text/plain")}
+    doc_id = (await auth_client.post("/documents", files=files)).json()["id"]
+
+    import uuid as _uuid
+
+    email = f"other-{_uuid.uuid4().hex}@example.com"
+    await client.post("/auth/register", json={"email": email, "password": "password123"})
+    token = (
+        await client.post("/auth/login", json={"email": email, "password": "password123"})
+    ).json()["access_token"]
+    resp = await client.post(
+        f"/documents/{doc_id}/replace",
+        files={"file": ("a.txt", b"malicious replace", "text/plain")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -111,10 +176,8 @@ async def test_delete_not_owned_returns_404(auth_client, client):
 
     email = f"other-{_uuid.uuid4().hex}@example.com"
     await client.post("/auth/register", json={"email": email, "password": "password123"})
-    token = (await client.post(
-        "/auth/login", json={"email": email, "password": "password123"}
-    )).json()["access_token"]
-    resp = await client.delete(
-        f"/documents/{doc_id}", headers={"Authorization": f"Bearer {token}"}
-    )
+    token = (
+        await client.post("/auth/login", json={"email": email, "password": "password123"})
+    ).json()["access_token"]
+    resp = await client.delete(f"/documents/{doc_id}", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 404

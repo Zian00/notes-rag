@@ -5,13 +5,22 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_enqueue_processing, get_ingestion_service
+from app.api.deps import (
+    get_current_user,
+    get_enqueue_processing,
+    get_enqueue_replace,
+    get_ingestion_service,
+)
 from app.core.config import get_settings
 from app.db.repositories.document import DocumentRepository
 from app.db.session import get_db
 from app.models.user import User
 from app.rag.storage import LocalFileStorage
-from app.schemas.document import DocumentResponse, DuplicateDocumentResponse
+from app.schemas.document import (
+    DocumentResponse,
+    DuplicateDocumentResponse,
+    ReplaceDocumentResponse,
+)
 from app.services.ingestion import DuplicateDocument, IngestionService
 from app.utils.files import sanitize_filename, sniff_content_type
 
@@ -77,6 +86,33 @@ async def list_documents(
 ) -> list[DocumentResponse]:
     docs = await DocumentRepository(session).list_for_user(current_user.id, course=course)
     return [DocumentResponse.model_validate(d) for d in docs]
+
+
+@router.post("/{document_id}/replace", response_model=ReplaceDocumentResponse)
+async def replace_document(
+    document_id: uuid.UUID,
+    file: UploadFile = File(...),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_db),  # noqa: B008
+    service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    enqueue: Callable[[uuid.UUID, str, str, int], Awaitable[None]] = Depends(get_enqueue_replace),  # noqa: B008
+) -> ReplaceDocumentResponse:
+    # Ownership check up front — a missing OR not-yours id both 404, same pattern
+    # as delete_document below.
+    existing = await DocumentRepository(session).get_for_user(document_id, current_user.id)
+    if existing is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
+
+    document, no_changes = await service.stage_replace(document_id, data)
+    if not no_changes:
+        await enqueue(document.id, document.storage_path, document.content_hash, document.file_size)
+    return ReplaceDocumentResponse(
+        document=DocumentResponse.model_validate(document), no_changes=no_changes
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
