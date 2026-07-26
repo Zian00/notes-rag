@@ -43,3 +43,37 @@ async def process_document(document_id: str) -> None:
             embedding_dimension=settings.embedding_dimension,
         )
         await service.process(uuid.UUID(document_id))
+
+
+@app.task(name="process_document_replace")
+async def process_document_replace(
+    document_id: str, new_storage_path: str, new_content_hash: str, new_file_size: int
+) -> None:
+    """Background job body for document replacement: mirrors process_document's
+    IngestionService construction, delegating the heavy work to process_replace()."""
+    settings = get_settings()
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        ocr = TesseractOcr(language=settings.ocr_language, cmd=settings.tesseract_cmd)
+        service = IngestionService(
+            session=session,
+            documents=DocumentRepository(session),
+            chunks=ChunkRepository(session),
+            storage=LocalFileStorage(settings.upload_dir),
+            parser=ParserDispatcher(
+                ocr=ocr,
+                ocr_enabled=settings.ocr_enabled,
+                min_chars=settings.pdf_ocr_min_chars_per_page,
+            ),
+            chunker=Chunker(
+                chunk_tokens=settings.chunk_tokens,
+                chunk_overlap_tokens=settings.chunk_overlap_tokens,
+                semantic_chunker=SemanticChunker(),
+            ),
+            embeddings=GeminiEmbeddingsProvider(settings),
+            embedding_model=settings.embedding_model,
+            embedding_dimension=settings.embedding_dimension,
+        )
+        await service.process_replace(
+            uuid.UUID(document_id), new_storage_path, new_content_hash, new_file_size
+        )

@@ -14,7 +14,7 @@ from app.db.repositories.document import DocumentRepository
 from app.db.repositories.refresh_token import RefreshTokenRepository
 from app.db.repositories.user import UserRepository
 from app.db.session import get_db, get_sessionmaker
-from app.jobs.ingestion_tasks import process_document
+from app.jobs.ingestion_tasks import process_document, process_document_replace
 from app.models.user import User
 from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
@@ -159,3 +159,20 @@ def get_enqueue_processing() -> Callable[[uuid.UUID], Awaitable[None]]:
     """FastAPI dependency wrapper so tests can override the real enqueue call
     with a no-op/recording fake, the same pattern used for get_current_user."""
     return enqueue_document_processing
+
+
+async def enqueue_document_replace(
+    document_id: uuid.UUID, new_storage_path: str, new_content_hash: str, new_file_size: int
+) -> None:
+    await process_document_replace.defer_async(
+        document_id=str(document_id),
+        new_storage_path=new_storage_path,
+        new_content_hash=new_content_hash,
+        new_file_size=new_file_size,
+    )
+
+
+def get_enqueue_replace() -> Callable[[uuid.UUID, str, str, int], Awaitable[None]]:
+    """FastAPI dependency wrapper mirroring get_enqueue_processing, for the
+    document-replace background job."""
+    return enqueue_document_replace
