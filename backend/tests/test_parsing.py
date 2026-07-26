@@ -30,6 +30,14 @@ def test_text_parser_markdown_splits_on_headings():
     assert any(s and "Details" in s for s in sections)
 
 
+def test_markdown_nested_headings_produce_breadcrumb_sections():
+    md = "# Lecture 4\nIntro text.\n## Neural Networks\nBody about neurons.\n"
+    parsed = TextParser().parse(md.encode(), "text/markdown")
+    sections = [s.section for s in parsed.segments]
+    assert "Lecture 4" in sections
+    assert "Lecture 4 > Neural Networks" in sections
+
+
 def test_pptx_parser_one_segment_per_slide():
     prs = Presentation()
     for i in range(2):
