@@ -31,6 +31,7 @@ dependencies = [
     "langchain-google-genai>=2.0",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    "procrastinate[psycopg]>=2.14",
 ]
 
 [dependency-groups]

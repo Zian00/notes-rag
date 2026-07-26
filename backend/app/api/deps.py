@@ -1,3 +1,6 @@
+import uuid
+from collections.abc import Awaitable, Callable
+
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -11,6 +14,7 @@ from app.db.repositories.document import DocumentRepository
 from app.db.repositories.refresh_token import RefreshTokenRepository
 from app.db.repositories.user import UserRepository
 from app.db.session import get_db, get_sessionmaker
+from app.jobs.ingestion_tasks import process_document
 from app.models.user import User
 from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
@@ -138,3 +142,18 @@ def get_chat_service(request: Request) -> ChatService:
     survives the StreamingResponse after the request's session is closed.
     """
     return ChatService(request.app.state.chat_graph, get_sessionmaker())
+
+
+# ---------------------------------------------------------------------------
+# Task 4: background ingestion enqueue seam
+# ---------------------------------------------------------------------------
+
+
+async def enqueue_document_processing(document_id: uuid.UUID) -> None:
+    await process_document.defer_async(document_id=str(document_id))
+
+
+def get_enqueue_processing() -> Callable[[uuid.UUID], Awaitable[None]]:
+    """FastAPI dependency wrapper so tests can override the real enqueue call
+    with a no-op/recording fake, the same pattern used for get_current_user."""
+    return enqueue_document_processing
