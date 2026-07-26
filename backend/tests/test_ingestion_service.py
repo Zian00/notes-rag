@@ -202,3 +202,64 @@ async def test_process_replace_failure_leaves_old_document_intact(db_session, tm
     assert reloaded.status == "failed"
     assert reloaded.content_hash == before_hash  # old version's identity preserved
     assert reloaded.chunk_count == before_chunk_count  # old chunks untouched
+
+
+@pytest.mark.asyncio
+async def test_process_replace_success_deletes_old_file_and_keeps_new_file(db_session, tmp_path):
+    """Regression test for a file-leak bug: stage_replace and process_replace share
+    one AsyncSession here (as all Replace tests do, and plausibly a real caller
+    too). SQLAlchemy's identity map + expire_on_commit=False meant `.get()` inside
+    process_replace could return the SAME Python object stage_replace had already
+    stamped in-memory with the NEW storage_path — so `old_storage_path` captured
+    the NEW path instead of the OLD one, and a successful replace deleted the
+    file the document row was just committed as pointing to while leaking the
+    true original file forever. Asserts the actual filesystem state after a
+    successful replace: the ORIGINAL file is gone, the NEW file still exists."""
+    user = await _user(db_session)
+    storage = LocalFileStorage(str(tmp_path))
+    svc = _service(db_session, storage)
+    staged = await svc.stage(
+        user_id=user.id, filename="notes.txt", content_type="text/plain", data=b"original text here"
+    )
+    await svc.process(staged.id)
+    original_path = staged.storage_path
+    assert Path(original_path).exists()  # noqa: ASYNC240
+
+    document, no_changes = await svc.stage_replace(staged.id, b"totally different new text")
+    assert no_changes is False
+    new_path = document.storage_path
+    assert new_path != original_path
+
+    await svc.process_replace(document.id, document.storage_path, document.content_hash, document.file_size)
+
+    assert not Path(original_path).exists()  # noqa: ASYNC240 — old file cleaned up
+    reloaded = await DocumentRepository(db_session).get(staged.id)
+    assert Path(reloaded.storage_path).exists()  # noqa: ASYNC240 — new file (still) on disk
+    assert reloaded.storage_path == new_path
+
+
+@pytest.mark.asyncio
+async def test_process_replace_cleans_up_orphaned_file_when_document_deleted(db_session, tmp_path):
+    """If the document is deleted between stage_replace and process_replace, the
+    new file stage_replace already wrote must not be silently orphaned."""
+    user = await _user(db_session)
+    storage = LocalFileStorage(str(tmp_path))
+    svc = _service(db_session, storage)
+    staged = await svc.stage(
+        user_id=user.id, filename="notes.txt", content_type="text/plain", data=b"original text here"
+    )
+    await svc.process(staged.id)
+
+    document, no_changes = await svc.stage_replace(staged.id, b"totally different new text")
+    assert no_changes is False
+    new_path = document.storage_path
+    assert Path(new_path).exists()  # noqa: ASYNC240
+
+    # Simulate concurrent deletion of the document row.
+    doc_row = await DocumentRepository(db_session).get(staged.id)
+    await DocumentRepository(db_session).delete(doc_row)
+    await db_session.commit()
+
+    await svc.process_replace(document.id, document.storage_path, document.content_hash, document.file_size)
+
+    assert not Path(new_path).exists()  # noqa: ASYNC240 — orphaned new file cleaned up

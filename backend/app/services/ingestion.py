@@ -185,7 +185,20 @@ class IngestionService:
         OLD identity untouched — it never actually lost anything."""
         document = await self._documents.get(document_id)
         if document is None:
+            # Deleted between stage_replace and process_replace: the new file
+            # stage_replace already wrote is now orphaned — clean it up.
+            self._storage.delete(new_storage_path)
             return
+
+        # IMPORTANT: `.get()` alone can return the SAME in-memory object that
+        # stage_replace already stamped with the NEW storage_path/content_hash
+        # (SQLAlchemy's identity map + expire_on_commit=False means the object
+        # isn't invalidated just because stage_replace committed a DIFFERENT
+        # field). If we shared a session with stage_replace, `document.storage_path`
+        # here would silently be the NEW path, not the OLD one — a fresh SELECT
+        # via refresh() forces the object's attributes back to the DB's actual
+        # committed row before we read anything off it.
+        await self._session.refresh(document)
 
         old_hash_to_id = await self._chunks.get_hashes_for_document(document.id)
         old_storage_path = document.storage_path  # the path BEFORE this replace (still on disk)
