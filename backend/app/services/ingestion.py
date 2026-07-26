@@ -144,3 +144,116 @@ class IngestionService:
             await self._documents.set_status(document.id, "failed", error_message=str(exc))
             await self._session.commit()
             raise
+
+    async def stage_replace(self, document_id: uuid.UUID, data: bytes) -> tuple[Document, bool]:
+        """Fast half of Replace: hash the new file first. If it matches the
+        document's CURRENT hash, short-circuit — no work at all. Otherwise, save
+        the new file bytes under a NEW storage path (the old file/chunks are left
+        completely alone until process_replace succeeds) and mark 'processing'."""
+        document = await self._documents.get(document_id)
+        if document is None:
+            raise IngestionError(f"Document {document_id} not found")
+
+        new_hash = hashlib.sha256(data).hexdigest()
+        if new_hash == document.content_hash:
+            return document, True
+
+        new_storage_path = self._storage.save(document.user_id, document.filename, data)
+        await self._documents.set_status(document.id, "processing")
+        await self._session.commit()
+        # Stamp the new identity now so the caller/enqueue step has what it needs
+        # to pass to process_replace — but note the DB row's content_hash/chunk_count
+        # are NOT updated here; that only happens once process_replace succeeds.
+        document.storage_path = new_storage_path
+        document.content_hash = new_hash
+        document.file_size = len(data)
+        return document, False
+
+    async def process_replace(
+        self,
+        document_id: uuid.UUID,
+        new_storage_path: str,
+        new_content_hash: str,
+        new_file_size: int,
+    ) -> None:
+        """Heavy half of Replace: parse+chunk the new file, diff its chunk hashes
+        against the document's EXISTING chunks (fetched via get_hashes_for_document,
+        keyed on the OLD content, since the DB row's own content_hash/storage_path
+        haven't been overwritten yet), reuse what's unchanged, embed only what's
+        new, delete what's gone, then atomically flip the document over to the
+        new version. On failure, the document is restored to 'ready' with its
+        OLD identity untouched — it never actually lost anything."""
+        document = await self._documents.get(document_id)
+        if document is None:
+            return
+
+        old_hash_to_id = await self._chunks.get_hashes_for_document(document.id)
+        old_storage_path = document.storage_path  # the path BEFORE this replace (still on disk)
+
+        try:
+            data = self._storage.read(new_storage_path)
+            parsed = self._parser.parse(data, document.content_type)
+            new_chunks = self._chunker.split(parsed)
+            new_hashes = [hashlib.sha256(c.content.encode()).hexdigest() for c in new_chunks]
+
+            to_embed_indices = [i for i, h in enumerate(new_hashes) if h not in old_hash_to_id]
+            vectors = self._embeddings.embed_documents(
+                [new_chunks[i].content for i in to_embed_indices]
+            )
+            vector_by_index = dict(zip(to_embed_indices, vectors, strict=True))
+
+            async with self._session.begin_nested():
+                new_rows = []
+                for i, (chunk, content_hash) in enumerate(zip(new_chunks, new_hashes, strict=True)):
+                    if content_hash in old_hash_to_id:
+                        # Unchanged content — keep the existing row, just reposition it.
+                        await self._chunks.update_chunk_position(
+                            old_hash_to_id[content_hash],
+                            chunk_index=chunk.chunk_index,
+                            page_number=chunk.page_number,
+                            section=chunk.section,
+                        )
+                    else:
+                        new_rows.append(
+                            dict(
+                                document_id=document.id,
+                                user_id=document.user_id,
+                                chunk_index=chunk.chunk_index,
+                                content=chunk.content,
+                                content_hash=content_hash,
+                                token_count=chunk.token_count,
+                                page_number=chunk.page_number,
+                                section=chunk.section,
+                                embedding=vector_by_index[i],
+                            )
+                        )
+                if new_rows:
+                    await self._chunks.add_many(new_rows)
+
+                # Any old chunk whose hash isn't in the new set is gone from the document.
+                stale_ids = [
+                    chunk_id
+                    for content_hash, chunk_id in old_hash_to_id.items()
+                    if content_hash not in set(new_hashes)
+                ]
+                await self._chunks.delete_by_ids(stale_ids)
+
+                document.storage_path = new_storage_path
+                document.content_hash = new_content_hash
+                document.file_size = new_file_size
+                document.page_count = parsed.page_count
+                document.chunk_count = len(new_chunks)
+                document.status = "ready"
+            await self._session.commit()
+            self._storage.delete(old_storage_path)  # superseded — safe to remove now
+        except Exception as exc:
+            await self._session.rollback()
+            # Restore the OLD identity — this replace attempt never happened, as
+            # far as the document's searchable content is concerned.
+            document = await self._documents.get(document_id)
+            if document is not None:
+                document.status = "failed"
+                document.error_message = str(exc)
+            self._storage.delete(new_storage_path)  # the attempted new file, never adopted
+            await self._session.commit()
+            raise
