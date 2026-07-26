@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 
 
@@ -52,6 +54,25 @@ async def test_upload_returns_pending_status_and_enqueues_processing(auth_client
     assert enqueued == [body["id"]]
 
     auth_client.app.dependency_overrides.pop(deps.get_enqueue_processing, None)
+
+
+def test_upload_document_wires_real_enqueue_processing_dependency():
+    """Regression guard for the enqueue wiring itself (not the queue mechanics).
+
+    Doesn't go through the app/ASGITransport — that path always sees either the
+    conftest no-op override or a test's own fake, so it can never catch a
+    regression where `documents.py` starts depending on the wrong callable. This
+    inspects the route's actual Depends(...) graph and the real `deps` module
+    directly: the ``enqueue`` parameter's dependency must literally be
+    ``deps.get_enqueue_processing`` (not a copy/lookalike), and that provider
+    must return the real ``deps.enqueue_document_processing`` (not a fake).
+    """
+    from app.api import deps, documents
+
+    sig = inspect.signature(documents.upload_document)
+    enqueue_param = sig.parameters["enqueue"]
+    assert enqueue_param.default.dependency is deps.get_enqueue_processing
+    assert deps.get_enqueue_processing() is deps.enqueue_document_processing
 
 
 @pytest.mark.asyncio
