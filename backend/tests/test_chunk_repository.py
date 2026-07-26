@@ -82,3 +82,65 @@ async def test_search_filters_by_course(db_session):
     await db_session.commit()
     assert len(await repo.search_similar(user.id, _vec(0), top_k=5, course="BIO")) == 1
     assert await repo.search_similar(user.id, _vec(0), top_k=5, course="MATH") == []
+
+
+def _chunk_row(document_id, user_id, chunk_index, content_hash):
+    """Helper to construct a chunk row dict for testing."""
+    return dict(
+        document_id=document_id,
+        user_id=user_id,
+        chunk_index=chunk_index,
+        content=f"content for {content_hash}",
+        content_hash=content_hash,
+        token_count=3,
+        page_number=None,
+        section=None,
+        embedding=[0.0] * DIM,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_hashes_for_document_maps_hash_to_chunk_id(db_session):
+    user, document = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [_chunk_row(document.id, user.id, 0, "h1"), _chunk_row(document.id, user.id, 1, "h2")]
+    )
+
+    hashes = await repo.get_hashes_for_document(document.id)
+    assert set(hashes.keys()) == {"h1", "h2"}
+
+
+@pytest.mark.asyncio
+async def test_delete_by_ids_removes_only_given_chunks(db_session):
+    user, document = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [
+            _chunk_row(document.id, user.id, 0, "h1"),
+            _chunk_row(document.id, user.id, 1, "h2"),
+            _chunk_row(document.id, user.id, 2, "h3"),
+        ]
+    )
+    chunks = {c.content_hash: c.id for c in await repo.list()}
+
+    await repo.delete_by_ids([chunks["h1"], chunks["h2"]])
+
+    remaining = await repo.list()
+    assert [c.id for c in remaining] == [chunks["h3"]]
+
+
+@pytest.mark.asyncio
+async def test_update_chunk_position_updates_index_page_and_section(db_session):
+    user, document = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many([_chunk_row(document.id, user.id, 0, "h1")])
+    chunk = (await repo.list())[0]
+
+    await repo.update_chunk_position(
+        chunk.id, chunk_index=5, page_number=9, section="New Section"
+    )
+
+    from app.models.document import DocumentChunk
+    updated = await db_session.get(DocumentChunk, chunk.id)
+    assert (updated.chunk_index, updated.page_number, updated.section) == (5, 9, "New Section")
