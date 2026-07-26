@@ -54,7 +54,7 @@ class IngestionService:
         self._embedding_model = embedding_model  # stamped on the document (provenance)
         self._embedding_dimension = embedding_dimension  # stamped on the document (provenance)
 
-    async def ingest(
+    async def stage(
         self,
         *,
         user_id: uuid.UUID,
@@ -65,47 +65,62 @@ class IngestionService:
         course: str | None = None,
         tags: list[str] | None = None,
     ) -> Document:
-        # Idempotent ingestion: the same bytes for the same user are never embedded
-        # twice. Checked before any work, so a duplicate writes no file and no rows.
+        """Fast, synchronous half of ingestion — safe to call inline in the request.
+        Dedup-checks, saves the raw file, and creates a 'pending' Document row with
+        no chunks yet. The heavy work happens later in process(), off the request."""
         content_hash = hashlib.sha256(data).hexdigest()
         existing = await self._documents.get_by_user_and_hash(user_id, content_hash)
         if existing is not None:
             raise DuplicateDocument(existing)
 
-        # The file is written before the DB transaction, so the failure path below must
-        # delete it explicitly — the DB can roll back, the filesystem cannot.
         storage_path = self._storage.save(user_id, filename, data)
         try:
-            # Savepoint = all-or-nothing for the document + its chunks. A savepoint
-            # (rather than a full session rollback) keeps the failure scoped to this
-            # ingestion and avoids expiring unrelated objects loaded in the session.
-            async with self._session.begin_nested():
-                parsed = self._parser.parse(data, content_type)  # bytes → text segments
-                chunks = self._chunker.split(parsed)  # segments → chunks
-                vectors = self._embeddings.embed_documents(
-                    [c.content for c in chunks]
-                )  # chunks → embedding vectors
+            document = await self._documents.create(
+                user_id=user_id,
+                filename=filename,
+                title=title,
+                course=course,
+                tags=tags or [],
+                content_type=content_type,
+                content_hash=content_hash,
+                storage_path=storage_path,
+                file_size=len(data),
+                page_count=None,
+                chunk_count=0,
+                embedding_model=self._embedding_model,
+                embedding_dimension=self._embedding_dimension,
+                status="pending",
+            )
+            await self._session.commit()
+        except Exception:
+            self._storage.delete(storage_path)
+            raise
+        return document
 
-                document = await self._documents.create(  # one documents row
-                    user_id=user_id,
-                    filename=filename,
-                    title=title,
-                    course=course,
-                    tags=tags or [],
-                    content_type=content_type,
-                    content_hash=content_hash,
-                    storage_path=storage_path,
-                    file_size=len(data),
-                    page_count=parsed.page_count,
-                    chunk_count=len(chunks),
-                    embedding_model=self._embedding_model,
-                    embedding_dimension=self._embedding_dimension,
-                )
-                await self._chunks.add_many(  # one row per chunk
+    async def process(self, document_id: uuid.UUID) -> None:
+        """Heavy half of ingestion, run by the background worker: parse -> chunk ->
+        embed -> persist chunks -> mark ready. On any failure, marks the document
+        'failed' with the error message (rather than deleting it — it stays
+        retryable) and re-raises so the job queue also records the failure."""
+        document = await self._documents.get(document_id)
+        if document is None:
+            return  # deleted before processing started
+
+        await self._documents.set_status(document.id, "processing")
+        await self._session.commit()
+
+        try:
+            data = self._storage.read(document.storage_path)
+            parsed = self._parser.parse(data, document.content_type)
+            chunks = self._chunker.split(parsed)
+            vectors = self._embeddings.embed_documents([c.content for c in chunks])
+
+            async with self._session.begin_nested():
+                await self._chunks.add_many(
                     [
                         dict(
                             document_id=document.id,
-                            user_id=user_id,
+                            user_id=document.user_id,
                             chunk_index=chunk.chunk_index,
                             content=chunk.content,
                             token_count=chunk.token_count,
@@ -113,15 +128,18 @@ class IngestionService:
                             section=chunk.section,
                             embedding=vector,
                         )
-                        # strict=True fails loudly if chunk/vector counts ever diverge,
-                        # rather than silently dropping data.
                         for chunk, vector in zip(chunks, vectors, strict=True)
                     ]
                 )
-        except Exception:
-            # Compensating cleanup: the savepoint rolls back the rows automatically,
-            # but the already-written file must be removed by hand.
-            self._storage.delete(storage_path)
+                await self._documents.update_after_processing(
+                    document.id,
+                    page_count=parsed.page_count,
+                    chunk_count=len(chunks),
+                    status="ready",
+                )
+            await self._session.commit()
+        except Exception as exc:
+            await self._session.rollback()
+            await self._documents.set_status(document.id, "failed", error_message=str(exc))
+            await self._session.commit()
             raise
-        await self._session.commit()
-        return document
