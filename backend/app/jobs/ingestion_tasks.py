@@ -7,6 +7,7 @@ from app.db.session import get_sessionmaker
 from app.jobs.app import app
 from app.rag.chunking import Chunker
 from app.rag.embeddings import GeminiEmbeddingsProvider
+from app.rag.semantic_chunking import SemanticChunker
 from app.rag.ocr import TesseractOcr
 from app.rag.parsing import ParserDispatcher
 from app.rag.storage import LocalFileStorage
@@ -33,7 +34,9 @@ async def process_document(document_id: str) -> None:
                 min_chars=settings.pdf_ocr_min_chars_per_page,
             ),
             chunker=Chunker(
-                chunk_tokens=settings.chunk_tokens, chunk_overlap_tokens=settings.chunk_overlap_tokens
+                chunk_tokens=settings.chunk_tokens,
+                chunk_overlap_tokens=settings.chunk_overlap_tokens,
+                semantic_chunker=SemanticChunker(),
             ),
             embeddings=GeminiEmbeddingsProvider(settings),
             embedding_model=settings.embedding_model,

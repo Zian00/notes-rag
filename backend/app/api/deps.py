@@ -18,6 +18,7 @@ from app.jobs.ingestion_tasks import process_document
 from app.models.user import User
 from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
+from app.rag.semantic_chunking import SemanticChunker
 from app.rag.ocr import OcrProvider, TesseractOcr
 from app.rag.parsing import ParserDispatcher
 from app.rag.storage import LocalFileStorage, StorageBackend
@@ -89,6 +90,7 @@ def get_chunker(settings: Settings = Depends(get_settings)) -> Chunker:  # noqa:
     return Chunker(
         chunk_tokens=settings.chunk_tokens,
         chunk_overlap_tokens=settings.chunk_overlap_tokens,
+        semantic_chunker=SemanticChunker(),
     )
 
 
