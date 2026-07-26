@@ -1,4 +1,5 @@
 import { render, renderHook, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import type { ReactNode } from "react"
@@ -107,6 +108,45 @@ describe("useDocuments", () => {
     expect(await screen.findByText(/processing/i)).toBeInTheDocument()
     expect(await screen.findByText(/failed/i)).toBeInTheDocument()
     expect(await screen.findByText(/embedding api down/i)).toBeInTheDocument()
+  })
+})
+
+describe("Replace action", () => {
+  it("replaces a document via the Replace action and shows it processing", async () => {
+    let capturedContentType: string | null = null
+    let listCallCount = 0
+    server.use(
+      // First GET (initial render) returns the original ready document; after replace
+      // invalidates the list, the refetch reflects the now-processing document — mirrors
+      // the listCallCount pattern used in the upload invalidation test above.
+      http.get(`${API_BASE}/documents`, () => {
+        listCallCount += 1
+        return HttpResponse.json([listCallCount === 1 ? doc1 : { ...doc1, status: "processing" }])
+      }),
+      http.post(`${API_BASE}/documents/${doc1.id}/replace`, async ({ request }) => {
+        capturedContentType = request.headers.get("Content-Type")
+        return HttpResponse.json({
+          document: { ...doc1, status: "processing" },
+          no_changes: false,
+        })
+      }),
+    )
+
+    const user = userEvent.setup()
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    await screen.findByText("Notes 1")
+
+    const file = new File(["new content"], "updated.pdf", { type: "application/pdf" })
+    // The Replace trigger is a <label> wrapping a visually-hidden <input type="file">
+    // (mirrors UploadDropzone's pattern, not a <button>-wraps-<input>) — so it's found
+    // via its label text like the upload dropzone's own input, not via role="button".
+    const fileInput = screen.getByLabelText(/replace/i, { selector: "input" }) as HTMLInputElement
+    await user.upload(fileInput, file)
+
+    expect(await screen.findByText(/processing/i)).toBeInTheDocument()
+    expect(capturedContentType).toMatch(/^multipart\/form-data/)
   })
 })
 
