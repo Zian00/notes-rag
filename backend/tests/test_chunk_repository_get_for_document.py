@@ -9,6 +9,7 @@ from app.db.repositories.user import UserRepository
 from app.models.document import Document
 from app.models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from tests.conftest import hash_content
 
 DIM = 1536

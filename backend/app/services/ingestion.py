@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,37 @@ class DuplicateDocument(IngestionError):
         # Carry the existing document so the API can answer 409 with a pointer to it.
         self.existing = existing
         super().__init__(str(existing.id))
+
+
+class DocumentBusy(IngestionError):
+    """Raised when Replace is attempted on a document that's currently 'pending'
+    or 'processing'. Without this guard, an in-flight initial process() and a
+    concurrently-triggered process_replace() could both mutate the same
+    document's chunks at once, corrupting state."""
+
+    def __init__(self, document_id: uuid.UUID, status: str) -> None:
+        self.document_id = document_id
+        self.status = status
+        super().__init__(
+            f"Cannot replace document {document_id}: still {status!r} — try again once it finishes."
+        )
+
+
+@dataclass(frozen=True)
+class StagedReplace:
+    """Value object returned by stage_replace. Carries the NEW file's identity
+    without mutating the persistent `document` ORM object's own attributes —
+    the old approach (stamping document.storage_path/content_hash/file_size
+    in-memory, unflushed) was fragile: any future code path that triggers an
+    autoflush/commit between stage_replace and process_replace would leak
+    those values into the DB prematurely, corrupting what process_replace reads
+    back as the "old" identity."""
+
+    document: Document
+    new_storage_path: str
+    new_content_hash: str
+    new_file_size: int
+    no_changes: bool
 
 
 class IngestionService:
@@ -145,29 +177,48 @@ class IngestionService:
             await self._session.commit()
             raise
 
-    async def stage_replace(self, document_id: uuid.UUID, data: bytes) -> tuple[Document, bool]:
+    async def stage_replace(self, document_id: uuid.UUID, data: bytes) -> StagedReplace:
         """Fast half of Replace: hash the new file first. If it matches the
-        document's CURRENT hash, short-circuit — no work at all. Otherwise, save
-        the new file bytes under a NEW storage path (the old file/chunks are left
-        completely alone until process_replace succeeds) and mark 'processing'."""
+        document's CURRENT hash AND the document isn't stuck 'failed', short-circuit
+        — no work at all. Otherwise, save the new file bytes under a NEW storage
+        path (the old file/chunks are left completely alone until process_replace
+        succeeds) and mark 'processing'. Raises DocumentBusy if the document is
+        currently mid-flight ('pending'/'processing') to prevent two concurrent
+        writers mutating the same document's chunks."""
         document = await self._documents.get(document_id)
         if document is None:
             raise IngestionError(f"Document {document_id} not found")
 
+        if document.status not in ("ready", "failed"):
+            raise DocumentBusy(document_id, document.status)
+
         new_hash = hashlib.sha256(data).hexdigest()
-        if new_hash == document.content_hash:
-            return document, True
+        # A document stuck 'failed' has no other recovery path: re-uploading the
+        # same bytes via POST /documents 409s as a duplicate. Replace is the only
+        # escape hatch, so a hash match must NOT short-circuit here — it needs to
+        # actually be reprocessed (treated as if it were a genuine change).
+        if new_hash == document.content_hash and document.status != "failed":
+            return StagedReplace(
+                document=document,
+                new_storage_path=document.storage_path,
+                new_content_hash=document.content_hash,
+                new_file_size=document.file_size,
+                no_changes=True,
+            )
 
         new_storage_path = self._storage.save(document.user_id, document.filename, data)
         await self._documents.set_status(document.id, "processing")
         await self._session.commit()
-        # Stamp the new identity now so the caller/enqueue step has what it needs
-        # to pass to process_replace — but note the DB row's content_hash/chunk_count
-        # are NOT updated here; that only happens once process_replace succeeds.
-        document.storage_path = new_storage_path
-        document.content_hash = new_hash
-        document.file_size = len(data)
-        return document, False
+        # NOTE: document's own attributes are deliberately left untouched — the
+        # new identity lives only in the StagedReplace value object below. See
+        # StagedReplace's docstring for why in-place mutation was fragile.
+        return StagedReplace(
+            document=document,
+            new_storage_path=new_storage_path,
+            new_content_hash=new_hash,
+            new_file_size=len(data),
+            no_changes=False,
+        )
 
     async def process_replace(
         self,
@@ -190,17 +241,22 @@ class IngestionService:
             self._storage.delete(new_storage_path)
             return
 
-        # IMPORTANT: `.get()` alone can return the SAME in-memory object that
-        # stage_replace already stamped with the NEW storage_path/content_hash
-        # (SQLAlchemy's identity map + expire_on_commit=False means the object
-        # isn't invalidated just because stage_replace committed a DIFFERENT
-        # field). If we shared a session with stage_replace, `document.storage_path`
-        # here would silently be the NEW path, not the OLD one — a fresh SELECT
-        # via refresh() forces the object's attributes back to the DB's actual
-        # committed row before we read anything off it.
+        # NOTE: stage_replace no longer mutates the Document ORM object's own
+        # attributes in-memory (see StagedReplace) — the new identity now lives
+        # only in the value object it returns, so `.get()`'s identity-mapped
+        # object should already reflect the DB's actual committed row. This
+        # refresh() is kept anyway as defense-in-depth: it's cheap, and it
+        # protects against any OTHER future code path stamping stale attributes
+        # onto this same in-memory object before we read old_storage_path below.
         await self._session.refresh(document)
 
-        old_hash_to_id = await self._chunks.get_hashes_for_document(document.id)
+        # old_hash_to_ids maps content_hash -> ALL row ids sharing that hash (not
+        # just one) — see get_hashes_for_document's docstring for why: legacy
+        # documents can have every chunk collapsed onto hash "", and any document
+        # can have genuine byte-identical duplicate chunks. We pop ids off these
+        # lists as new chunks consume them below, so whatever's left unconsumed
+        # after the loop is stale-by-construction, not by fragile hash-set math.
+        old_hash_to_ids = await self._chunks.get_hashes_for_document(document.id)
         old_storage_path = document.storage_path  # the path BEFORE this replace (still on disk)
 
         try:
@@ -209,7 +265,19 @@ class IngestionService:
             new_chunks = self._chunker.split(parsed)
             new_hashes = [hashlib.sha256(c.content.encode()).hexdigest() for c in new_chunks]
 
-            to_embed_indices = [i for i, h in enumerate(new_hashes) if h not in old_hash_to_id]
+            # Work on a local copy so we can pop ids as they're claimed by a new
+            # chunk, in encounter order — this is what makes N identical new
+            # chunks correctly reuse up to N identical old rows (and no more).
+            remaining_old_ids = {h: list(ids) for h, ids in old_hash_to_ids.items()}
+            reused_chunk_id_by_index: dict[int, uuid.UUID] = {}
+            for i, h in enumerate(new_hashes):
+                available = remaining_old_ids.get(h)
+                if available:
+                    reused_chunk_id_by_index[i] = available.pop(0)
+
+            to_embed_indices = [
+                i for i in range(len(new_hashes)) if i not in reused_chunk_id_by_index
+            ]
             vectors = self._embeddings.embed_documents(
                 [new_chunks[i].content for i in to_embed_indices]
             )
@@ -218,10 +286,11 @@ class IngestionService:
             async with self._session.begin_nested():
                 new_rows = []
                 for i, (chunk, content_hash) in enumerate(zip(new_chunks, new_hashes, strict=True)):
-                    if content_hash in old_hash_to_id:
+                    reused_id = reused_chunk_id_by_index.get(i)
+                    if reused_id is not None:
                         # Unchanged content — keep the existing row, just reposition it.
                         await self._chunks.update_chunk_position(
-                            old_hash_to_id[content_hash],
+                            reused_id,
                             chunk_index=chunk.chunk_index,
                             page_number=chunk.page_number,
                             section=chunk.section,
@@ -243,11 +312,11 @@ class IngestionService:
                 if new_rows:
                     await self._chunks.add_many(new_rows)
 
-                # Any old chunk whose hash isn't in the new set is gone from the document.
+                # Anything left in remaining_old_ids after every new chunk has
+                # claimed its match is genuinely gone from the document — delete
+                # ALL of it, not just one id per hash.
                 stale_ids = [
-                    chunk_id
-                    for content_hash, chunk_id in old_hash_to_id.items()
-                    if content_hash not in set(new_hashes)
+                    chunk_id for ids in remaining_old_ids.values() for chunk_id in ids
                 ]
                 await self._chunks.delete_by_ids(stale_ids)
 
@@ -258,7 +327,6 @@ class IngestionService:
                 document.chunk_count = len(new_chunks)
                 document.status = "ready"
             await self._session.commit()
-            self._storage.delete(old_storage_path)  # superseded — safe to remove now
         except Exception as exc:
             await self._session.rollback()
             # Restore the OLD identity — this replace attempt never happened, as
@@ -270,3 +338,13 @@ class IngestionService:
             self._storage.delete(new_storage_path)  # the attempted new file, never adopted
             await self._session.commit()
             raise
+
+        # Only reached on success. Deleting the old file here (outside try/except)
+        # means a failure in delete() itself can never be mistaken for a replace
+        # failure and trigger deletion of new_storage_path (the file the document
+        # row was just successfully committed to point at). Guarded on inequality
+        # because a redelivered/duplicate job message for an already-completed
+        # replace would otherwise have old_storage_path == new_storage_path (the
+        # row was already fully swapped over) and delete the live file.
+        if old_storage_path != new_storage_path:
+            self._storage.delete(old_storage_path)

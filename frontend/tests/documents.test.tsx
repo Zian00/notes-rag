@@ -83,7 +83,7 @@ describe("useDocuments", () => {
       http.get(`${API_BASE}/documents`, ({ request }) => {
         capturedCourse = new URL(request.url).searchParams.get("course")
         return HttpResponse.json([doc1])
-      }),
+      })
     )
 
     const { result } = renderHook(() => useDocuments("cs101"), { wrapper: createWrapper() })
@@ -98,9 +98,15 @@ describe("useDocuments", () => {
       http.get(`${API_BASE}/documents`, () =>
         HttpResponse.json([
           { ...doc1, id: "1", filename: "a.pdf", status: "pending", error_message: null },
-          { ...doc2, id: "2", filename: "b.pdf", status: "failed", error_message: "Embedding API down" },
-        ]),
-      ),
+          {
+            ...doc2,
+            id: "2",
+            filename: "b.pdf",
+            status: "failed",
+            error_message: "Embedding API down",
+          },
+        ])
+      )
     )
     const Providers = createProviders()
     render(<DocumentList />, { wrapper: Providers })
@@ -129,7 +135,7 @@ describe("Replace action", () => {
           document: { ...doc1, status: "processing" },
           no_changes: false,
         })
-      }),
+      })
     )
 
     const user = userEvent.setup()
@@ -148,13 +154,34 @@ describe("Replace action", () => {
     expect(await screen.findByText(/processing/i)).toBeInTheDocument()
     expect(capturedContentType).toMatch(/^multipart\/form-data/)
   })
+
+  it("keeps the Replace file input focusable (not display:none) for keyboard/screen-reader users", async () => {
+    server.use(http.get(`${API_BASE}/documents`, () => HttpResponse.json([doc1])))
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    await screen.findByText("Notes 1")
+
+    const fileInput = screen.getByLabelText(/replace/i, { selector: "input" }) as HTMLInputElement
+    // `hidden`/display:none removes an element from the tab order entirely — the
+    // fix uses `sr-only` (visually hidden but still focusable), the same class
+    // UploadDropzone.tsx already uses for its own file input.
+    expect(fileInput.className).not.toMatch(/\bhidden\b/)
+    expect(fileInput.className).toMatch(/\bsr-only\b/)
+    fileInput.focus()
+    expect(fileInput).toHaveFocus()
+  })
 })
 
 describe("useUploadDocument", () => {
   it("uploads multipart form data and invalidates the documents list on success", async () => {
     let listCallCount = 0
     let capturedContentType: string | null = null
-    let capturedFields: { filePresent: boolean; title: FormDataEntryValue | null; tags: FormDataEntryValue[] } = {
+    let capturedFields: {
+      filePresent: boolean
+      title: FormDataEntryValue | null
+      tags: FormDataEntryValue[]
+    } = {
       filePresent: false,
       title: null,
       tags: [],
@@ -180,7 +207,7 @@ describe("useUploadDocument", () => {
           tags: formData.getAll("tags"),
         }
         return HttpResponse.json(doc1, { status: 201 })
-      }),
+      })
     )
 
     // Both hooks are rendered from a single renderHook() call (one React root) — with two
@@ -188,10 +215,9 @@ describe("useUploadDocument", () => {
     // mutation's invalidateQueries doesn't reliably propagate to the other root's `result.current`
     // snapshot under this test setup, even though the underlying QueryClient cache is correctly
     // updated (confirmed by inspecting queryClient.getQueryCache() directly during triage).
-    const { result } = renderHook(
-      () => ({ list: useDocuments(), upload: useUploadDocument() }),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => ({ list: useDocuments(), upload: useUploadDocument() }), {
+      wrapper: createWrapper(),
+    })
     await waitFor(() => expect(result.current.list.isLoading).toBe(false))
     expect(listCallCount).toBe(1)
 
@@ -218,9 +244,9 @@ describe("useUploadDocument", () => {
       http.post(`${API_BASE}/documents`, () =>
         HttpResponse.json(
           { detail: "Document already exists", document_id: doc1.id },
-          { status: 409 },
-        ),
-      ),
+          { status: 409 }
+        )
+      )
     )
 
     const { result } = renderHook(() => useUploadDocument(), { wrapper: createWrapper() })
@@ -237,8 +263,8 @@ describe("useUploadDocument", () => {
   it("throws UploadError with status 413 when the file is too large", async () => {
     server.use(
       http.post(`${API_BASE}/documents`, () =>
-        HttpResponse.json({ detail: "File too large" }, { status: 413 }),
-      ),
+        HttpResponse.json({ detail: "File too large" }, { status: 413 })
+      )
     )
 
     const { result } = renderHook(() => useUploadDocument(), { wrapper: createWrapper() })
@@ -261,15 +287,14 @@ describe("useDeleteDocument", () => {
         listCallCount += 1
         return HttpResponse.json(listCallCount === 1 ? [doc1] : [])
       }),
-      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 })),
+      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 }))
     )
 
     // Both hooks share a single renderHook() root — see the comment in the upload
     // invalidation test above for why that matters for cross-hook cache observation.
-    const { result } = renderHook(
-      () => ({ list: useDocuments(), delete: useDeleteDocument() }),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => ({ list: useDocuments(), delete: useDeleteDocument() }), {
+      wrapper: createWrapper(),
+    })
     await waitFor(() => expect(result.current.list.isLoading).toBe(false))
     expect(result.current.list.data).toEqual([doc1])
 
@@ -285,8 +310,8 @@ describe("useDeleteDocument", () => {
   it("throws DeleteError with status 404 when the document is already gone", async () => {
     server.use(
       http.delete(`${API_BASE}/documents/${doc1.id}`, () =>
-        HttpResponse.json({ detail: "Document not found" }, { status: 404 }),
-      ),
+        HttpResponse.json({ detail: "Document not found" }, { status: 404 })
+      )
     )
 
     const { result } = renderHook(() => useDeleteDocument(), { wrapper: createWrapper() })

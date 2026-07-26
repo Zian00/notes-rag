@@ -70,7 +70,9 @@ def test_oversized_segment_with_semantic_chunker_delegates_to_it():
         def split(self, text: str) -> list[str]:
             return ["first half.", "second half."]
 
-    chunker = Chunker(chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker())
+    chunker = Chunker(
+        chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker()
+    )
     long_text = " ".join(["word"] * 20)
     doc = ParsedDocument(segments=[Segment(text=long_text)])
     chunks = chunker.split(doc)
@@ -82,7 +84,9 @@ def test_semantic_piece_still_too_large_falls_back_to_fixed_size_split():
         def split(self, text: str) -> list[str]:
             return [text]  # doesn't actually shrink it
 
-    chunker = Chunker(chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker())
+    chunker = Chunker(
+        chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker()
+    )
     long_text = " ".join(["word"] * 20)
     doc = ParsedDocument(segments=[Segment(text=long_text)])
     chunks = chunker.split(doc)

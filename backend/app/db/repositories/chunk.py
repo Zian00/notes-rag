@@ -95,14 +95,24 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
-    async def get_hashes_for_document(self, document_id: uuid.UUID) -> dict[str, uuid.UUID]:
-        """Maps each existing chunk's content_hash -> its row id, for one document —
-        used by Replace to decide which chunks can be left alone vs deleted."""
+    async def get_hashes_for_document(
+        self, document_id: uuid.UUID
+    ) -> dict[str, list[uuid.UUID]]:
+        """Maps each existing chunk's content_hash -> ALL row ids sharing that hash,
+        for one document — used by Replace to decide which chunks can be reused vs
+        deleted. Returning a list (not a single id) matters because two distinct
+        chunk rows can legitimately share one hash: duplicate content within the
+        same document (repeated boilerplate) or every legacy chunk that predates
+        the content_hash backfill (all sharing hash ""). Collapsing to one id per
+        hash would silently orphan the rest as undeletable zombie rows."""
         stmt = select(DocumentChunk.content_hash, DocumentChunk.id).where(
             DocumentChunk.document_id == document_id
         )
         result = await self._session.execute(stmt)
-        return {row.content_hash: row.id for row in result.all()}
+        hashes: dict[str, list[uuid.UUID]] = {}
+        for row in result.all():
+            hashes.setdefault(row.content_hash, []).append(row.id)
+        return hashes
 
     async def update_chunk_position(
         self,

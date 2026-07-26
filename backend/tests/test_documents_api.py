@@ -3,6 +3,55 @@ import inspect
 import pytest
 
 
+async def _process_synchronously(document_id, client) -> None:
+    """Run IngestionService.process() inline against the same test DB/fakes the
+    HTTP client uses (mirrors test_search_api.py's helper) — Replace now rejects
+    documents still 'pending'/'processing' (issue 9's race guard), so any test
+    that replaces a just-uploaded document must first actually get it to 'ready',
+    since the default `client` fixture's enqueue override is a no-op."""
+    from app.core.config import get_settings
+    from app.db.repositories.chunk import ChunkRepository
+    from app.db.repositories.document import DocumentRepository
+    from app.rag.chunking import Chunker
+    from app.rag.parsing import ParserDispatcher
+    from app.rag.storage import LocalFileStorage
+    from app.services.ingestion import IngestionService
+
+    from tests.fakes import FakeEmbeddingsProvider, FakeOcrProvider
+
+    settings = get_settings()
+    async with client.maker() as session:
+        service = IngestionService(
+            session=session,
+            documents=DocumentRepository(session),
+            chunks=ChunkRepository(session),
+            storage=LocalFileStorage(client.upload_dir),
+            parser=ParserDispatcher(
+                ocr=FakeOcrProvider(),
+                ocr_enabled=settings.ocr_enabled,
+                min_chars=settings.pdf_ocr_min_chars_per_page,
+            ),
+            chunker=Chunker(
+                chunk_tokens=settings.chunk_tokens,
+                chunk_overlap_tokens=settings.chunk_overlap_tokens,
+            ),
+            embeddings=FakeEmbeddingsProvider(),
+            embedding_model=settings.embedding_model,
+            embedding_dimension=settings.embedding_dimension,
+        )
+        await service.process(document_id)
+
+
+def _enqueue_synchronously(client):
+    """Override for get_enqueue_processing: process the document inline instead
+    of deferring to a real job queue (there's no worker running in tests)."""
+    from app.api import deps
+
+    client.app.dependency_overrides[deps.get_enqueue_processing] = (
+        lambda: (lambda document_id: _process_synchronously(document_id, client))
+    )
+
+
 @pytest.mark.asyncio
 async def test_upload_list_delete_flow(auth_client):
     files = {"file": ("notes.txt", b"alpha beta gamma. delta epsilon.", "text/plain")}
@@ -102,6 +151,7 @@ async def test_duplicate_upload_returns_409(auth_client):
 
 @pytest.mark.asyncio
 async def test_replace_with_identical_content_short_circuits(auth_client):
+    _enqueue_synchronously(auth_client)
     upload = await auth_client.post(
         "/documents",
         files={"file": ("notes.txt", b"same content", "text/plain")},
@@ -127,6 +177,7 @@ async def test_replace_with_new_content_enqueues_processing(auth_client):
         enqueued.append((str(document_id), new_content_hash))
 
     auth_client.app.dependency_overrides[deps.get_enqueue_replace] = lambda: fake_enqueue
+    _enqueue_synchronously(auth_client)
 
     upload = await auth_client.post(
         "/documents",

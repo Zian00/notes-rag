@@ -21,7 +21,7 @@ from app.schemas.document import (
     DuplicateDocumentResponse,
     ReplaceDocumentResponse,
 )
-from app.services.ingestion import DuplicateDocument, IngestionService
+from app.services.ingestion import DocumentBusy, DuplicateDocument, IngestionService
 from app.utils.files import sanitize_filename, sniff_content_type
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -107,11 +107,27 @@ async def replace_document(
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
 
-    document, no_changes = await service.stage_replace(document_id, data)
-    if not no_changes:
-        await enqueue(document.id, document.storage_path, document.content_hash, document.file_size)
+    try:
+        staged = await service.stage_replace(document_id, data)
+    except DocumentBusy as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    if not staged.no_changes:
+        await enqueue(
+            staged.document.id,
+            staged.new_storage_path,
+            staged.new_content_hash,
+            staged.new_file_size,
+        )
+    # Response shape decision: `staged.document` is the ORM object EXACTLY as it
+    # was before this call — stage_replace never mutates it in place anymore (see
+    # StagedReplace). When no_changes is True that's also the CURRENT state (a
+    # true no-op). When no_changes is False, the replace has only been QUEUED —
+    # the document is still the OLD version on disk until the background job
+    # finishes — so returning the OLD DocumentResponse here is accurate; the
+    # frontend already treats no_changes=False as "processing" via its toast.
     return ReplaceDocumentResponse(
-        document=DocumentResponse.model_validate(document), no_changes=no_changes
+        document=DocumentResponse.model_validate(staged.document), no_changes=staged.no_changes
     )
 
 

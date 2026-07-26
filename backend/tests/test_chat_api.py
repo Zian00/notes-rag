@@ -21,6 +21,7 @@ from app.rag.graph.nodes import Grade
 from httpx import AsyncClient
 from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
 from tests.conftest import hash_content
 
 DIM = 1536

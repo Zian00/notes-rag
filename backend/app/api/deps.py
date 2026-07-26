@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Awaitable, Callable
+from functools import lru_cache
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -18,9 +19,9 @@ from app.jobs.ingestion_tasks import process_document, process_document_replace
 from app.models.user import User
 from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
-from app.rag.semantic_chunking import SemanticChunker
 from app.rag.ocr import OcrProvider, TesseractOcr
 from app.rag.parsing import ParserDispatcher
+from app.rag.semantic_chunking import SemanticChunker
 from app.rag.storage import LocalFileStorage, StorageBackend
 from app.services.auth import AuthService
 from app.services.chat import ChatService
@@ -86,11 +87,27 @@ def get_parser(
     )
 
 
+@lru_cache(maxsize=1)
+def get_semantic_chunker() -> SemanticChunker:
+    """Constructs the SemanticChunker exactly once per process and caches it.
+
+    SemanticChunker() loads a fastembed ONNX model (a network download on first
+    use, then a real load every time otherwise) — expensive enough that building
+    a fresh one per request is wasteful. Worse, get_chunker() is a dependency of
+    get_ingestion_service(), which BOTH POST /documents and POST
+    /documents/{id}/replace depend on — but those endpoints only ever call
+    stage()/stage_replace(), which never touch the chunker at all. Every
+    upload/replace request was paying the full model-load cost for an object
+    constructed and immediately discarded, unused.
+    """
+    return SemanticChunker()
+
+
 def get_chunker(settings: Settings = Depends(get_settings)) -> Chunker:  # noqa: B008
     return Chunker(
         chunk_tokens=settings.chunk_tokens,
         chunk_overlap_tokens=settings.chunk_overlap_tokens,
-        semantic_chunker=SemanticChunker(),
+        semantic_chunker=get_semantic_chunker(),
     )
 
 

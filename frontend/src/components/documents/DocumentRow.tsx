@@ -39,7 +39,7 @@ export function DocumentRow({ document }: DocumentRowProps) {
         onError: (error) => {
           toast.error(error.message)
         },
-      },
+      }
     )
   }
 
@@ -68,7 +68,9 @@ export function DocumentRow({ document }: DocumentRowProps) {
         {document.status !== "ready" && (
           <p
             className={
-              document.status === "failed" ? "mt-0.5 text-sm text-destructive" : "mt-0.5 text-sm text-muted-foreground"
+              document.status === "failed"
+                ? "mt-0.5 text-sm text-destructive"
+                : "mt-0.5 text-sm text-muted-foreground"
             }
           >
             {document.status === "failed"
@@ -91,11 +93,11 @@ export function DocumentRow({ document }: DocumentRowProps) {
             the label natively activates the file input exactly once. A button-wraps-input
             pattern was tried earlier in this project and caused a double-file-dialog
             re-entrancy bug; this mirrors the fix already used by UploadDropzone. */}
-        <label className="cursor-pointer text-sm text-muted-foreground underline-offset-2 hover:underline">
+        <label className="cursor-pointer text-sm text-muted-foreground underline-offset-2 hover:underline has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/50">
           Replace
           <input
             type="file"
-            className="hidden"
+            className="sr-only"
             disabled={replaceDocument.isPending}
             onChange={(e) => {
               const file = e.target.files?.[0]
@@ -120,7 +122,8 @@ export function DocumentRow({ document }: DocumentRowProps) {
             <DialogHeader>
               <DialogTitle>Delete this document?</DialogTitle>
               <DialogDescription>
-                This removes &ldquo;{displayName}&rdquo; and all of its chunks too. This can&apos;t be undone.
+                This removes &ldquo;{displayName}&rdquo; and all of its chunks too. This can&apos;t
+                be undone.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

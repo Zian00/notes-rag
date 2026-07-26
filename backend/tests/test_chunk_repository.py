@@ -4,6 +4,7 @@ import pytest
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
+
 from tests.conftest import hash_content
 
 DIM = 1536

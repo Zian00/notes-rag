@@ -54,6 +54,25 @@ class SemanticChunker:
         idx = min(int(len(sorted_distances) * self._percentile / 100), len(sorted_distances) - 1)
         threshold = sorted_distances[idx]
 
+        # WHY this guard: `distance >= threshold` alone guarantees AT LEAST ONE
+        # split always happens, because the value AT the percentile index is
+        # itself always >= threshold. When a text is one solid, uniform-topic
+        # block of prose, every consecutive-sentence distance is roughly the
+        # same, so EVERY boundary then satisfies `>= threshold` too — shredding
+        # the text into one chunk per sentence with no real topic shift
+        # anywhere. Chosen fix: skip splitting entirely when the SPREAD between
+        # the smallest and largest distance is below a small epsilon — that
+        # directly tests "is there a genuinely sharper shift somewhere, or are
+        # these all roughly the same distance apart", which a plain threshold
+        # comparison can't distinguish (and which a multiplicative margin on
+        # `threshold` alone would mishandle whenever the uniform value happens
+        # to be near zero). A real topic boundary's distance towers over the
+        # rest of the distribution, so genuinely different topics still split.
+        _MIN_DISTANCE_SPREAD = 0.02
+        spread = sorted_distances[-1] - sorted_distances[0]
+        if spread < _MIN_DISTANCE_SPREAD:
+            return [" ".join(sentences)]
+
         pieces: list[str] = []
         current = [sentences[0]]
         for i, distance in enumerate(distances):
