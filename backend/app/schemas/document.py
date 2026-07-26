@@ -18,6 +18,8 @@ class DocumentResponse(BaseModel):
     content_type: str
     page_count: int | None
     chunk_count: int
+    status: str
+    error_message: str | None
     file_size: int
     embedding_model: str
     embedding_dimension: int
@@ -30,6 +32,17 @@ class DuplicateDocumentResponse(BaseModel):
 
     detail: str = "Document already exists"
     document_id: UUID
+
+
+class ReplaceDocumentResponse(BaseModel):
+    """Response body for POST /documents/{id}/replace.
+
+    ``no_changes`` is True when the uploaded bytes hash-match the existing
+    document, in which case no background reprocessing job was enqueued.
+    """
+
+    document: DocumentResponse
+    no_changes: bool
 
 
 class SearchRequest(BaseModel):

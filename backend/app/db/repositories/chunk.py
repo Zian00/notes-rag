@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
@@ -94,3 +94,48 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
             .order_by(DocumentChunk.chunk_index)
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def get_hashes_for_document(
+        self, document_id: uuid.UUID
+    ) -> dict[str, list[uuid.UUID]]:
+        """Maps each existing chunk's content_hash -> ALL row ids sharing that hash,
+        for one document — used by Replace to decide which chunks can be reused vs
+        deleted. Returning a list (not a single id) matters because two distinct
+        chunk rows can legitimately share one hash: duplicate content within the
+        same document (repeated boilerplate) or every legacy chunk that predates
+        the content_hash backfill (all sharing hash ""). Collapsing to one id per
+        hash would silently orphan the rest as undeletable zombie rows."""
+        stmt = select(DocumentChunk.content_hash, DocumentChunk.id).where(
+            DocumentChunk.document_id == document_id
+        )
+        result = await self._session.execute(stmt)
+        hashes: dict[str, list[uuid.UUID]] = {}
+        for row in result.all():
+            hashes.setdefault(row.content_hash, []).append(row.id)
+        return hashes
+
+    async def update_chunk_position(
+        self,
+        chunk_id: uuid.UUID,
+        *,
+        chunk_index: int,
+        page_number: int | None,
+        section: str | None,
+    ) -> None:
+        """Repositions a RETAINED chunk (its content_hash matched an old chunk, so
+        its embedding is still valid) to reflect where it sits in the newly
+        reprocessed document."""
+        chunk = await self.get(chunk_id)
+        if chunk is None:
+            return
+        chunk.chunk_index = chunk_index
+        chunk.page_number = page_number
+        chunk.section = section
+        await self._session.flush()
+
+    async def delete_by_ids(self, chunk_ids: list[uuid.UUID]) -> None:
+        if not chunk_ids:
+            return
+        stmt = delete(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids))
+        await self._session.execute(stmt)
+        await self._session.flush()

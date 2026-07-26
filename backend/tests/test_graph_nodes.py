@@ -23,6 +23,7 @@ from app.rag.graph.tools import build_tools
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from tests.conftest import hash_content
 from tests.fakes import FakeChatModel, FakeEmbeddingsProvider
 
 DIM = 1536
@@ -60,6 +61,7 @@ async def _seed(session: AsyncSession) -> tuple[Any, Any]:
                 "user_id": user.id,
                 "chunk_index": 0,
                 "content": "hello world",
+                "content_hash": hash_content("hello world"),
                 "embedding": _vec(0),
             }
         ]

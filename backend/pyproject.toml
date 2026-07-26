@@ -16,6 +16,7 @@ dependencies = [
     "pydantic[email]>=2.13.4",
     "pypdf>=5.1",
     "pdf2image>=1.17",
+    "pymupdf4llm>=0.0.17",
     "pytesseract>=0.3.13",
     "pillow>=11.0",
     "python-pptx>=1.0",
@@ -31,6 +32,8 @@ dependencies = [
     "langchain-google-genai>=2.0",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    "procrastinate[psycopg]>=2.14",
+    "fastembed>=0.4",
 ]
 
 [dependency-groups]

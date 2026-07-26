@@ -38,6 +38,7 @@ from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from tests.conftest import hash_content
 from tests.fakes import FakeChatModel, FakeEmbeddingsProvider
 
 DIM = 1536
@@ -93,6 +94,7 @@ async def _seed_doc(session: AsyncSession, user_id: uuid.UUID) -> Any:
                 "user_id": user_id,
                 "chunk_index": 0,
                 "content": "heap is a tree-based structure",
+                "content_hash": hash_content("heap is a tree-based structure"),
                 "embedding": _vec(0),
             }
         ]

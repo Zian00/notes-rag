@@ -38,3 +38,24 @@ class DocumentRepository(BaseRepository[Document]):
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def set_status(
+        self, document_id: uuid.UUID, status: str, error_message: str | None = None
+    ) -> None:
+        doc = await self.get(document_id)
+        if doc is None:
+            return  # deleted concurrently; nothing to update
+        doc.status = status
+        doc.error_message = error_message
+        await self._session.flush()
+
+    async def update_after_processing(
+        self, document_id: uuid.UUID, *, page_count: int | None, chunk_count: int, status: str
+    ) -> None:
+        doc = await self.get(document_id)
+        if doc is None:
+            return
+        doc.page_count = page_count
+        doc.chunk_count = chunk_count
+        doc.status = status
+        await self._session.flush()

@@ -30,6 +30,14 @@ def test_text_parser_markdown_splits_on_headings():
     assert any(s and "Details" in s for s in sections)
 
 
+def test_markdown_nested_headings_produce_breadcrumb_sections():
+    md = "# Lecture 4\nIntro text.\n## Neural Networks\nBody about neurons.\n"
+    parsed = TextParser().parse(md.encode(), "text/markdown")
+    sections = [s.section for s in parsed.segments]
+    assert "Lecture 4" in sections
+    assert "Lecture 4 > Neural Networks" in sections
+
+
 def test_pptx_parser_one_segment_per_slide():
     prs = Presentation()
     for i in range(2):
@@ -55,6 +63,24 @@ def test_docx_parser_extracts_text():
     doc = DocxParser().parse(buf.getvalue(), "application/...")
     joined = " ".join(s.text for s in doc.segments)
     assert "first para" in joined and "second para" in joined
+
+
+def test_docx_nested_headings_produce_breadcrumb_sections():
+    doc = DocxDocument()
+    doc.add_heading("Lecture 4", level=1)
+    doc.add_paragraph("Intro text.")
+    doc.add_heading("Neural Networks", level=2)
+    doc.add_paragraph("Body about neurons.")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    parsed = DocxParser().parse(
+        buf.getvalue(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    sections = [s.section for s in parsed.segments]
+    assert "Lecture 4" in sections
+    assert "Lecture 4 > Neural Networks" in sections
 
 
 def test_image_parser_uses_ocr():
@@ -94,6 +120,22 @@ def test_pdf_parser_falls_back_to_ocr_for_image_only_page():
     )
     text = " ".join(s.text for s in doc.segments)
     assert "FALLBACK TEXT" in text
+
+
+def test_pdf_headings_produce_breadcrumb_sections():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Lecture 4", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=11)
+    pdf.cell(0, 10, "Intro text about the lecture.", new_x="LMARGIN", new_y="NEXT")
+    data = pdf.output()
+
+    parser = PdfParser(ocr=FakeOcrProvider(), ocr_enabled=True, min_chars=5)
+    parsed = parser.parse(bytes(data), "application/pdf")
+
+    assert parsed.page_count == 1
+    assert any(s.section for s in parsed.segments)  # at least one heading detected
 
 
 def test_dispatcher_routes_by_content_type():

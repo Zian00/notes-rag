@@ -1,5 +1,7 @@
 import uuid
 
+import pytest
+from app.db.repositories.user import UserRepository
 from app.models.document import Document, DocumentChunk
 
 
@@ -32,3 +34,25 @@ def test_chunk_fields():
     assert chunk.content == "hello"
     assert chunk.section is None
     assert chunk.page_number is None
+
+
+@pytest.mark.asyncio
+async def test_document_defaults_to_pending_status_with_no_error(db_session):
+    user = await UserRepository(db_session).create(
+        email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
+    )
+    await db_session.commit()
+    doc = Document(
+        user_id=user.id,
+        filename="a.txt",
+        content_type="text/plain",
+        content_hash="a" * 64,
+        storage_path="/tmp/a.txt",
+        file_size=1,
+        embedding_model="gemini-embedding-001",
+        embedding_dimension=1536,
+    )
+    db_session.add(doc)
+    await db_session.flush()
+    assert doc.status == "pending"
+    assert doc.error_message is None

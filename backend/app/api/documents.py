@@ -1,17 +1,27 @@
 import uuid
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_ingestion_service
+from app.api.deps import (
+    get_current_user,
+    get_enqueue_processing,
+    get_enqueue_replace,
+    get_ingestion_service,
+)
 from app.core.config import get_settings
 from app.db.repositories.document import DocumentRepository
 from app.db.session import get_db
 from app.models.user import User
 from app.rag.storage import LocalFileStorage
-from app.schemas.document import DocumentResponse, DuplicateDocumentResponse
-from app.services.ingestion import DuplicateDocument, IngestionService
+from app.schemas.document import (
+    DocumentResponse,
+    DuplicateDocumentResponse,
+    ReplaceDocumentResponse,
+)
+from app.services.ingestion import DocumentBusy, DuplicateDocument, IngestionService
 from app.utils.files import sanitize_filename, sniff_content_type
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -30,6 +40,7 @@ async def upload_document(
     tags: list[str] | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    enqueue: Callable[[uuid.UUID], Awaitable[None]] = Depends(get_enqueue_processing),  # noqa: B008
 ) -> DocumentResponse | JSONResponse:
     settings = get_settings()
     data = await file.read()
@@ -45,7 +56,7 @@ async def upload_document(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported file type")
 
     try:
-        document = await service.ingest(
+        document = await service.stage(
             user_id=current_user.id,
             filename=sanitize_filename(file.filename or "upload"),
             content_type=content_type,
@@ -61,6 +72,9 @@ async def upload_document(
             status_code=status.HTTP_409_CONFLICT,
             content={"detail": "Document already exists", "document_id": str(exc.existing.id)},
         )
+    # Chunking/embedding is deferred to a background job — stage() only persists
+    # the 'pending' document row + raw file, keeping the upload request fast.
+    await enqueue(document.id)
     return DocumentResponse.model_validate(document)
 
 
@@ -72,6 +86,49 @@ async def list_documents(
 ) -> list[DocumentResponse]:
     docs = await DocumentRepository(session).list_for_user(current_user.id, course=course)
     return [DocumentResponse.model_validate(d) for d in docs]
+
+
+@router.post("/{document_id}/replace", response_model=ReplaceDocumentResponse)
+async def replace_document(
+    document_id: uuid.UUID,
+    file: UploadFile = File(...),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_db),  # noqa: B008
+    service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    enqueue: Callable[[uuid.UUID, str, str, int], Awaitable[None]] = Depends(get_enqueue_replace),  # noqa: B008
+) -> ReplaceDocumentResponse:
+    # Ownership check up front — a missing OR not-yours id both 404, same pattern
+    # as delete_document below.
+    existing = await DocumentRepository(session).get_for_user(document_id, current_user.id)
+    if existing is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
+
+    try:
+        staged = await service.stage_replace(document_id, data)
+    except DocumentBusy as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    if not staged.no_changes:
+        await enqueue(
+            staged.document.id,
+            staged.new_storage_path,
+            staged.new_content_hash,
+            staged.new_file_size,
+        )
+    # Response shape decision: `staged.document` is the ORM object EXACTLY as it
+    # was before this call — stage_replace never mutates it in place anymore (see
+    # StagedReplace). When no_changes is True that's also the CURRENT state (a
+    # true no-op). When no_changes is False, the replace has only been QUEUED —
+    # the document is still the OLD version on disk until the background job
+    # finishes — so returning the OLD DocumentResponse here is accurate; the
+    # frontend already treats no_changes=False as "processing" via its toast.
+    return ReplaceDocumentResponse(
+        document=DocumentResponse.model_validate(staged.document), no_changes=staged.no_changes
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

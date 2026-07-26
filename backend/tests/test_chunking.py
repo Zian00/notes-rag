@@ -47,3 +47,48 @@ def test_blank_segments_are_skipped():
     chunks = _chunker().split(doc)
     assert len(chunks) == 1
     assert chunks[0].page_number == 2
+
+
+def test_segment_that_fits_stays_as_one_chunk_with_no_forced_split():
+    chunker = Chunker(chunk_tokens=100, chunk_overlap_tokens=10)
+    doc = ParsedDocument(segments=[Segment(text="A short segment.", section="Intro")])
+    chunks = chunker.split(doc)
+    assert len(chunks) == 1
+    assert chunks[0].content == "A short segment."
+
+
+def test_oversized_segment_without_semantic_chunker_uses_fixed_size_split():
+    chunker = Chunker(chunk_tokens=5, chunk_overlap_tokens=1)
+    long_text = " ".join(["word"] * 50)
+    doc = ParsedDocument(segments=[Segment(text=long_text)])
+    chunks = chunker.split(doc)
+    assert len(chunks) > 1
+
+
+def test_oversized_segment_with_semantic_chunker_delegates_to_it():
+    class FakeSemanticChunker:
+        def split(self, text: str) -> list[str]:
+            return ["first half.", "second half."]
+
+    chunker = Chunker(
+        chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker()
+    )
+    long_text = " ".join(["word"] * 20)
+    doc = ParsedDocument(segments=[Segment(text=long_text)])
+    chunks = chunker.split(doc)
+    assert [c.content for c in chunks] == ["first half.", "second half."]
+
+
+def test_semantic_piece_still_too_large_falls_back_to_fixed_size_split():
+    class FakeSemanticChunker:
+        def split(self, text: str) -> list[str]:
+            return [text]  # doesn't actually shrink it
+
+    chunker = Chunker(
+        chunk_tokens=3, chunk_overlap_tokens=1, semantic_chunker=FakeSemanticChunker()
+    )
+    long_text = " ".join(["word"] * 20)
+    doc = ParsedDocument(segments=[Segment(text=long_text)])
+    chunks = chunker.split(doc)
+    # Falls through to the fixed-size splitter as the final safety net.
+    assert len(chunks) > 1

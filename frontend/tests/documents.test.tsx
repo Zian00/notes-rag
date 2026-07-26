@@ -1,4 +1,5 @@
-import { renderHook, waitFor } from "@testing-library/react"
+import { render, renderHook, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import type { ReactNode } from "react"
@@ -6,6 +7,7 @@ import { server } from "./msw/server"
 import { useDocuments, useUploadDocument, useDeleteDocument } from "@/api/hooks/useDocuments"
 import { UploadError } from "@/api/uploadError"
 import { DeleteError } from "@/api/deleteError"
+import { DocumentList } from "@/components/documents/DocumentList"
 import type { components } from "@/api/schema"
 
 // client.ts resolves its relative "/api" base against window.location.origin —
@@ -23,6 +25,8 @@ const doc1: DocumentResponse = {
   content_type: "application/pdf",
   page_count: 3,
   chunk_count: 10,
+  status: "ready",
+  error_message: null,
   file_size: 1024,
   embedding_model: "test-model",
   embedding_dimension: 384,
@@ -35,6 +39,8 @@ const doc2: DocumentResponse = {
   id: "22222222-2222-2222-2222-222222222222",
   filename: "notes2.pdf",
   title: "Notes 2",
+  status: "ready",
+  error_message: null,
 }
 
 // Fresh QueryClient per test so cache state can't leak between tests (retry
@@ -47,6 +53,17 @@ function createWrapper() {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   }
   return Wrapper
+}
+
+// Providers wrapper for component render tests (matches the pattern used in documents-ui.test.tsx).
+function createProviders() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  function Providers({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+  return Providers
 }
 
 describe("useDocuments", () => {
@@ -66,7 +83,7 @@ describe("useDocuments", () => {
       http.get(`${API_BASE}/documents`, ({ request }) => {
         capturedCourse = new URL(request.url).searchParams.get("course")
         return HttpResponse.json([doc1])
-      }),
+      })
     )
 
     const { result } = renderHook(() => useDocuments("cs101"), { wrapper: createWrapper() })
@@ -75,13 +92,96 @@ describe("useDocuments", () => {
     expect(capturedCourse).toBe("cs101")
     expect(result.current.data).toEqual([doc1])
   })
+
+  it("shows a processing badge for a pending document and a failed badge with the error for a failed one", async () => {
+    server.use(
+      http.get(`${API_BASE}/documents`, () =>
+        HttpResponse.json([
+          { ...doc1, id: "1", filename: "a.pdf", status: "pending", error_message: null },
+          {
+            ...doc2,
+            id: "2",
+            filename: "b.pdf",
+            status: "failed",
+            error_message: "Embedding API down",
+          },
+        ])
+      )
+    )
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    expect(await screen.findByText(/processing/i)).toBeInTheDocument()
+    expect(await screen.findByText(/failed/i)).toBeInTheDocument()
+    expect(await screen.findByText(/embedding api down/i)).toBeInTheDocument()
+  })
+})
+
+describe("Replace action", () => {
+  it("replaces a document via the Replace action and shows it processing", async () => {
+    let capturedContentType: string | null = null
+    let listCallCount = 0
+    server.use(
+      // First GET (initial render) returns the original ready document; after replace
+      // invalidates the list, the refetch reflects the now-processing document — mirrors
+      // the listCallCount pattern used in the upload invalidation test above.
+      http.get(`${API_BASE}/documents`, () => {
+        listCallCount += 1
+        return HttpResponse.json([listCallCount === 1 ? doc1 : { ...doc1, status: "processing" }])
+      }),
+      http.post(`${API_BASE}/documents/${doc1.id}/replace`, async ({ request }) => {
+        capturedContentType = request.headers.get("Content-Type")
+        return HttpResponse.json({
+          document: { ...doc1, status: "processing" },
+          no_changes: false,
+        })
+      })
+    )
+
+    const user = userEvent.setup()
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    await screen.findByText("Notes 1")
+
+    const file = new File(["new content"], "updated.pdf", { type: "application/pdf" })
+    // The Replace trigger is a <label> wrapping a visually-hidden <input type="file">
+    // (mirrors UploadDropzone's pattern, not a <button>-wraps-<input>) — so it's found
+    // via its label text like the upload dropzone's own input, not via role="button".
+    const fileInput = screen.getByLabelText(/replace/i, { selector: "input" }) as HTMLInputElement
+    await user.upload(fileInput, file)
+
+    expect(await screen.findByText(/processing/i)).toBeInTheDocument()
+    expect(capturedContentType).toMatch(/^multipart\/form-data/)
+  })
+
+  it("keeps the Replace file input focusable (not display:none) for keyboard/screen-reader users", async () => {
+    server.use(http.get(`${API_BASE}/documents`, () => HttpResponse.json([doc1])))
+    const Providers = createProviders()
+    render(<DocumentList />, { wrapper: Providers })
+
+    await screen.findByText("Notes 1")
+
+    const fileInput = screen.getByLabelText(/replace/i, { selector: "input" }) as HTMLInputElement
+    // `hidden`/display:none removes an element from the tab order entirely — the
+    // fix uses `sr-only` (visually hidden but still focusable), the same class
+    // UploadDropzone.tsx already uses for its own file input.
+    expect(fileInput.className).not.toMatch(/\bhidden\b/)
+    expect(fileInput.className).toMatch(/\bsr-only\b/)
+    fileInput.focus()
+    expect(fileInput).toHaveFocus()
+  })
 })
 
 describe("useUploadDocument", () => {
   it("uploads multipart form data and invalidates the documents list on success", async () => {
     let listCallCount = 0
     let capturedContentType: string | null = null
-    let capturedFields: { filePresent: boolean; title: FormDataEntryValue | null; tags: FormDataEntryValue[] } = {
+    let capturedFields: {
+      filePresent: boolean
+      title: FormDataEntryValue | null
+      tags: FormDataEntryValue[]
+    } = {
       filePresent: false,
       title: null,
       tags: [],
@@ -107,7 +207,7 @@ describe("useUploadDocument", () => {
           tags: formData.getAll("tags"),
         }
         return HttpResponse.json(doc1, { status: 201 })
-      }),
+      })
     )
 
     // Both hooks are rendered from a single renderHook() call (one React root) — with two
@@ -115,10 +215,9 @@ describe("useUploadDocument", () => {
     // mutation's invalidateQueries doesn't reliably propagate to the other root's `result.current`
     // snapshot under this test setup, even though the underlying QueryClient cache is correctly
     // updated (confirmed by inspecting queryClient.getQueryCache() directly during triage).
-    const { result } = renderHook(
-      () => ({ list: useDocuments(), upload: useUploadDocument() }),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => ({ list: useDocuments(), upload: useUploadDocument() }), {
+      wrapper: createWrapper(),
+    })
     await waitFor(() => expect(result.current.list.isLoading).toBe(false))
     expect(listCallCount).toBe(1)
 
@@ -145,9 +244,9 @@ describe("useUploadDocument", () => {
       http.post(`${API_BASE}/documents`, () =>
         HttpResponse.json(
           { detail: "Document already exists", document_id: doc1.id },
-          { status: 409 },
-        ),
-      ),
+          { status: 409 }
+        )
+      )
     )
 
     const { result } = renderHook(() => useUploadDocument(), { wrapper: createWrapper() })
@@ -164,8 +263,8 @@ describe("useUploadDocument", () => {
   it("throws UploadError with status 413 when the file is too large", async () => {
     server.use(
       http.post(`${API_BASE}/documents`, () =>
-        HttpResponse.json({ detail: "File too large" }, { status: 413 }),
-      ),
+        HttpResponse.json({ detail: "File too large" }, { status: 413 })
+      )
     )
 
     const { result } = renderHook(() => useUploadDocument(), { wrapper: createWrapper() })
@@ -188,15 +287,14 @@ describe("useDeleteDocument", () => {
         listCallCount += 1
         return HttpResponse.json(listCallCount === 1 ? [doc1] : [])
       }),
-      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 })),
+      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 }))
     )
 
     // Both hooks share a single renderHook() root — see the comment in the upload
     // invalidation test above for why that matters for cross-hook cache observation.
-    const { result } = renderHook(
-      () => ({ list: useDocuments(), delete: useDeleteDocument() }),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => ({ list: useDocuments(), delete: useDeleteDocument() }), {
+      wrapper: createWrapper(),
+    })
     await waitFor(() => expect(result.current.list.isLoading).toBe(false))
     expect(result.current.list.data).toEqual([doc1])
 
@@ -212,8 +310,8 @@ describe("useDeleteDocument", () => {
   it("throws DeleteError with status 404 when the document is already gone", async () => {
     server.use(
       http.delete(`${API_BASE}/documents/${doc1.id}`, () =>
-        HttpResponse.json({ detail: "Document not found" }, { status: 404 }),
-      ),
+        HttpResponse.json({ detail: "Document not found" }, { status: 404 })
+      )
     )
 
     const { result } = renderHook(() => useDeleteDocument(), { wrapper: createWrapper() })

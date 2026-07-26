@@ -6,6 +6,7 @@ import type { components } from "@/api/schema"
 
 type DocumentResponse = components["schemas"]["DocumentResponse"]
 type DuplicateDocumentResponse = components["schemas"]["DuplicateDocumentResponse"]
+type ReplaceDocumentResponse = components["schemas"]["ReplaceDocumentResponse"]
 
 // Derives the exact query key openapi-react-query uses for useDocuments(undefined) — the
 // default (unfiltered) course — rather than hardcoding a guessed key, so invalidation can't
@@ -31,7 +32,18 @@ export interface UploadDocumentInput {
 // Lists documents, optionally scoped to a course. Thin wrapper over openapi-react-query
 // so callers don't need to know the ("get", "/documents", { params }) call shape.
 export function useDocuments(course?: string): UseQueryResult<DocumentResponse[], unknown> {
-  return $api.useQuery("get", "/documents", { params: { query: { course } } })
+  return $api.useQuery("get", "/documents", {
+    params: { query: { course } },
+  }, {
+    // Keep polling while anything is still processing, so the list flips to
+    // ready/failed on its own without the user manually refreshing. No interval
+    // once everything has settled (pending/processing gone) — avoids polling forever.
+    refetchInterval: (query) => {
+      const docs = query.state.data
+      const stillWorking = docs?.some((d) => d.status === "pending" || d.status === "processing")
+      return stillWorking ? 2000 : false
+    },
+  })
 }
 
 // Uploads a document via multipart/form-data and invalidates the documents list on success.
@@ -79,6 +91,42 @@ export function useUploadDocument(): UseMutationResult<DocumentResponse, UploadE
         throw new UploadError(response.status, detail)
       }
 
+      return data
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: documentsListKey })
+    },
+  })
+}
+
+/** Input shape for useReplaceDocument's mutate() — the document being replaced plus the new file. */
+export interface ReplaceDocumentInput {
+  documentId: string
+  file: File
+}
+
+// Replaces a document's content via multipart/form-data and invalidates the documents
+// list on success (the replaced document flips to "processing" until re-ingestion finishes).
+export function useReplaceDocument(): UseMutationResult<ReplaceDocumentResponse, UploadError, ReplaceDocumentInput> {
+  const queryClient = useQueryClient()
+  const documentsListKey = getDocumentsListKey()
+
+  return useMutation<ReplaceDocumentResponse, UploadError, ReplaceDocumentInput>({
+    mutationFn: async ({ documentId, file }) => {
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const { data, error, response } = await fetchClient.POST("/documents/{document_id}/replace", {
+        params: { path: { document_id: documentId } },
+        body: formData as unknown as never,
+        bodySerializer: (body) => body as unknown as BodyInit,
+      })
+
+      if (error || !data) {
+        const detail =
+          error && typeof error === "object" && "detail" in error ? String(error.detail) : "Replace failed"
+        throw new UploadError(response.status, detail)
+      }
       return data
     },
     onSuccess: () => {

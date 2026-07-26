@@ -124,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/documents/{document_id}/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace Document */
+        post: operations["replace_document_documents__document_id__replace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -214,6 +231,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_replace_document_documents__document_id__replace_post */
+        Body_replace_document_documents__document_id__replace_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_document_documents_post */
         Body_upload_document_documents_post: {
             /** File */
@@ -329,6 +351,10 @@ export interface components {
             page_count: number | null;
             /** Chunk Count */
             chunk_count: number;
+            /** Status */
+            status: string;
+            /** Error Message */
+            error_message: string | null;
             /** File Size */
             file_size: number;
             /** Embedding Model */
@@ -406,6 +432,18 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /**
+         * ReplaceDocumentResponse
+         * @description Response body for POST /documents/{id}/replace.
+         *
+         *     ``no_changes`` is True when the uploaded bytes hash-match the existing
+         *     document, in which case no background reprocessing job was enqueued.
+         */
+        ReplaceDocumentResponse: {
+            document: components["schemas"]["DocumentResponse"];
+            /** No Changes */
+            no_changes: boolean;
         };
         /** SearchRequest */
         SearchRequest: {
@@ -700,6 +738,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DuplicateDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_document_documents__document_id__replace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_replace_document_documents__document_id__replace_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceDocumentResponse"];
                 };
             };
             /** @description Validation Error */
