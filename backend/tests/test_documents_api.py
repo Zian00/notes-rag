@@ -10,7 +10,10 @@ async def test_upload_list_delete_flow(auth_client):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["title"] == "My Notes"
-    assert body["chunk_count"] >= 1
+    # stage() only persists the document row; chunking/embedding now happens later
+    # in the background process() job, so right after upload the doc is 'pending'.
+    assert body["status"] == "pending"
+    assert body["chunk_count"] == 0
     doc_id = body["id"]
 
     listed = await auth_client.get("/documents")
@@ -24,6 +27,31 @@ async def test_upload_list_delete_flow(auth_client):
     assert deleted.status_code == 204
     after = await auth_client.get("/documents")
     assert all(d["id"] != doc_id for d in after.json())
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_pending_status_and_enqueues_processing(auth_client):
+    from app.api import deps
+
+    enqueued: list[str] = []
+
+    async def fake_enqueue(document_id):
+        enqueued.append(str(document_id))
+
+    auth_client.app.dependency_overrides[deps.get_enqueue_processing] = lambda: fake_enqueue
+
+    r = await auth_client.post(
+        "/documents",
+        files={"file": ("notes.txt", b"hello world", "text/plain")},
+    )
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == "pending"
+    assert body["chunk_count"] == 0
+    assert enqueued == [body["id"]]
+
+    auth_client.app.dependency_overrides.pop(deps.get_enqueue_processing, None)
 
 
 @pytest.mark.asyncio

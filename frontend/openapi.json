@@ -932,6 +932,21 @@
             "type": "integer",
             "title": "Chunk Count"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
           "file_size": {
             "type": "integer",
             "title": "File Size"
@@ -965,6 +980,8 @@
           "content_type",
           "page_count",
           "chunk_count",
+          "status",
+          "error_message",
           "file_size",
           "embedding_model",
           "embedding_dimension",

@@ -18,6 +18,8 @@ class DocumentResponse(BaseModel):
     content_type: str
     page_count: int | None
     chunk_count: int
+    status: str
+    error_message: str | None
     file_size: int
     embedding_model: str
     embedding_dimension: int

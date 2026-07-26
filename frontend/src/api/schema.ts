@@ -329,6 +329,10 @@ export interface components {
             page_count: number | null;
             /** Chunk Count */
             chunk_count: number;
+            /** Status */
+            status: string;
+            /** Error Message */
+            error_message: string | null;
             /** File Size */
             file_size: number;
             /** Embedding Model */

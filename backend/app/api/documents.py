@@ -1,10 +1,11 @@
 import uuid
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_ingestion_service
+from app.api.deps import get_current_user, get_enqueue_processing, get_ingestion_service
 from app.core.config import get_settings
 from app.db.repositories.document import DocumentRepository
 from app.db.session import get_db
@@ -30,6 +31,7 @@ async def upload_document(
     tags: list[str] | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    enqueue: Callable[[uuid.UUID], Awaitable[None]] = Depends(get_enqueue_processing),  # noqa: B008
 ) -> DocumentResponse | JSONResponse:
     settings = get_settings()
     data = await file.read()
@@ -45,7 +47,7 @@ async def upload_document(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported file type")
 
     try:
-        document = await service.ingest(
+        document = await service.stage(
             user_id=current_user.id,
             filename=sanitize_filename(file.filename or "upload"),
             content_type=content_type,
@@ -61,6 +63,9 @@ async def upload_document(
             status_code=status.HTTP_409_CONFLICT,
             content={"detail": "Document already exists", "document_id": str(exc.existing.id)},
         )
+    # Chunking/embedding is deferred to a background job — stage() only persists
+    # the 'pending' document row + raw file, keeping the upload request fast.
+    await enqueue(document.id)
     return DocumentResponse.model_validate(document)
 
 

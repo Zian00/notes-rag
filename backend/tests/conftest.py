@@ -95,7 +95,13 @@ async def client(
     that graph.  Building the graph once (not per request) is REQUIRED so the ``InMemorySaver``
     accumulates state across requests within a test — enabling multi-turn tests.
     """
-    from app.api.deps import get_chat_service, get_embeddings, get_ocr, get_storage
+    from app.api.deps import (
+        get_chat_service,
+        get_embeddings,
+        get_enqueue_processing,
+        get_ocr,
+        get_storage,
+    )
     from app.core.config import get_settings
     from app.db.session import get_db
     from app.main import create_app
@@ -122,14 +128,30 @@ async def client(
         checkpointer=InMemorySaver(),
     )
 
+    # The real enqueue calls process_document.defer_async(), which needs a procrastinate
+    # app opened against a real connection pool (app.open()/open_async()) — not available
+    # under ASGITransport in tests. Default to a no-op so upload tests (which don't care
+    # about background processing) don't hit AppNotOpen; tests that DO need chunks to
+    # exist (e.g. search tests) override this again to run process() synchronously.
+    async def _noop_enqueue(document_id: object) -> None:
+        return None
+
     app = create_app()
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddingsProvider()
     app.dependency_overrides[get_ocr] = lambda: FakeOcrProvider()
     app.dependency_overrides[get_storage] = lambda: LocalFileStorage(str(tmp_path))
     app.dependency_overrides[get_chat_service] = lambda: ChatService(graph, maker)
+    app.dependency_overrides[get_enqueue_processing] = lambda: _noop_enqueue
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Expose the underlying FastAPI app + the session maker/upload dir so individual
+        # tests can add/pop their own dependency_overrides (e.g. get_enqueue_processing)
+        # or build a real IngestionService against the same test DB/fakes, without a
+        # second fixture.
+        ac.app = app
+        ac.maker = maker
+        ac.upload_dir = str(tmp_path)
         yield ac
 
 
