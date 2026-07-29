@@ -16,16 +16,19 @@ jobs:
       JWT_SECRET: ci-secret
     steps:
       - uses: actions/checkout@v4
-      - name: Start Postgres (paradedb, pg_search preloaded)
-        # GitHub Actions' `services:` block can't override a service container's
-        # command, but pg_search's BM25 index type requires shared_preload_libraries
-        # set at server startup (-c flag) — so Postgres is started manually here
-        # instead of via `services:`.
+      - name: Start Postgres (paradedb)
+        # paradedb/paradedb:pg16 already sets shared_preload_libraries to
+        # 'pg_search,pg_cron,pg_stat_statements' in its default postgresql.conf —
+        # its own bootstrap script (10_bootstrap_paradedb.sh) requires all three.
+        # Do NOT pass a `-c shared_preload_libraries=...` override here: it
+        # REPLACES rather than extends the GUC, dropping pg_cron/pg_stat_statements
+        # and crashing that bootstrap script on first init (confirmed via
+        # `docker logs` after a prior CI failure).
         run: |
           docker run -d --name notes_rag_postgres \
             -e POSTGRES_USER=notes -e POSTGRES_PASSWORD=notes -e POSTGRES_DB=notes_rag \
             -p 5432:5432 \
-            paradedb/paradedb:pg16 postgres -c shared_preload_libraries=pg_search
+            paradedb/paradedb:pg16
           ready=""
           for i in $(seq 1 60); do
             if docker exec notes_rag_postgres pg_isready -U notes -d notes_rag; then

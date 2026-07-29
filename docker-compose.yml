@@ -5,10 +5,11 @@ services:
     # major version of the existing postgres_data volume.
     image: paradedb/paradedb:pg16
     container_name: notes_rag_postgres
-    # pg_search's BM25 index type only works when its C extension is loaded at
-    # server startup (not just CREATE EXTENSION) — Postgres requires this for
-    # background-worker-backed index access methods.
-    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
+    # No shared_preload_libraries override here: the image's own default
+    # postgresql.conf already sets 'pg_search,pg_cron,pg_stat_statements', which
+    # its bootstrap script (10_bootstrap_paradedb.sh) requires. A `-c` override
+    # REPLACES that GUC instead of extending it, dropping pg_cron/pg_stat_statements
+    # and crashing bootstrap on a fresh volume (confirmed via CI `docker logs`).
     environment:
       POSTGRES_USER: notes
       POSTGRES_PASSWORD: notes
