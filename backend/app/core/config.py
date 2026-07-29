@@ -63,6 +63,9 @@ class Settings(BaseSettings):
 
     # Retrieval
     retrieval_top_k: int = 5
+    # Pre-reranking candidate pool: fetch this many chunks from pgvector, then
+    # pass them all to the cross-encoder, then trim to retrieval_top_k.
+    retrieval_candidate_k: int = 20
 
     # --- Phase 3: agentic RAG / LLM ---
     llm_provider: Literal["google", "anthropic", "openai_compatible"] = "google"

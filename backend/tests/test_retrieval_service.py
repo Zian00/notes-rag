@@ -7,7 +7,7 @@ from app.db.repositories.user import UserRepository
 from app.services.retrieval import RetrievalService
 
 from tests.conftest import hash_content
-from tests.fakes import FakeEmbeddingsProvider
+from tests.fakes import FakeEmbeddingsProvider, FakeReranker
 
 DIM = 1536
 
@@ -49,3 +49,76 @@ async def test_empty_query_returns_no_results(db_session):
     await db_session.commit()
     svc = RetrievalService(ChunkRepository(db_session), FakeEmbeddingsProvider(), default_top_k=5)
     assert await svc.search(user.id, "   ") == []
+
+
+def _doc_kwargs(user_id: uuid.UUID, chunk_count: int = 1) -> dict:
+    return dict(
+        user_id=user_id,
+        filename="a.pdf",
+        content_type="application/pdf",
+        content_hash=uuid.uuid4().hex,
+        storage_path="/tmp/a",
+        file_size=1,
+        chunk_count=chunk_count,
+        embedding_model="m",
+        embedding_dimension=DIM,
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_with_reranker_reorders_candidates(db_session):
+    """Reranker result order overrides pgvector distance order."""
+    user = await UserRepository(db_session).create(
+        email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
+    )
+    doc = await DocumentRepository(db_session).create(**_doc_kwargs(user.id, chunk_count=2))
+
+    # FakeEmbeddingsProvider: one-hot at len(text) % DIM.
+    # Query "xxxxx" (len=5) → slot 5 → closest to "abcde" (len=5, slot=5).
+    # pgvector order: ["abcde", "abcd"] (slot-5 chunk first, slot-4 chunk second).
+    # FakeReranker reverses → ["abcd", "abcde"].
+    await ChunkRepository(db_session).add_many([
+        dict(document_id=doc.id, user_id=user.id, chunk_index=0,
+             content="abcd", content_hash=hash_content("abcd"),
+             embedding=_vec(len("abcd") % DIM)),
+        dict(document_id=doc.id, user_id=user.id, chunk_index=1,
+             content="abcde", content_hash=hash_content("abcde"),
+             embedding=_vec(len("abcde") % DIM)),
+    ])
+    await db_session.commit()
+
+    svc = RetrievalService(
+        ChunkRepository(db_session), FakeEmbeddingsProvider(),
+        default_top_k=2, candidate_k=2, reranker=FakeReranker(),
+    )
+    results = await svc.search(user.id, "xxxxx")
+
+    assert len(results) == 2
+    # Reranker reversed pgvector order → previously-second chunk is now first.
+    assert results[0].content == "abcd"
+    assert results[1].content == "abcde"
+
+
+@pytest.mark.asyncio
+async def test_search_with_reranker_trims_candidates_to_top_k(db_session):
+    """candidate_k > top_k: reranker sees all candidates, but only top_k are returned."""
+    user = await UserRepository(db_session).create(
+        email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
+    )
+    doc = await DocumentRepository(db_session).create(**_doc_kwargs(user.id, chunk_count=3))
+
+    await ChunkRepository(db_session).add_many([
+        dict(document_id=doc.id, user_id=user.id, chunk_index=i,
+             content=f"chunk{i}", content_hash=hash_content(f"chunk{i}"),
+             embedding=_vec(i % DIM))
+        for i in range(3)
+    ])
+    await db_session.commit()
+
+    # candidate_k=3 fetches all 3; top_k=1 → only the top-ranked result is returned.
+    svc = RetrievalService(
+        ChunkRepository(db_session), FakeEmbeddingsProvider(),
+        default_top_k=1, candidate_k=3, reranker=FakeReranker(),
+    )
+    results = await svc.search(user.id, "anything")
+    assert len(results) == 1

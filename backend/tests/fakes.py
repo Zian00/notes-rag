@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
+from app.db.repositories.chunk import ChunkSearchResult
 from app.rag.embeddings import EmbeddingsProvider
 from app.rag.ocr import OcrProvider
 from langchain_core.language_models import BaseChatModel
@@ -136,3 +137,15 @@ class FakeEmbeddingsProvider(EmbeddingsProvider):
 
     def embed_query(self, text: str) -> list[float]:
         return self._vec(text)
+
+
+class FakeReranker:
+    """Reverses chunk order — deterministic, no ONNX model loaded.
+
+    pgvector returns chunks ordered best-to-worst by cosine similarity; reversing
+    simulates a cross-encoder that disagrees with the embedding model's ranking.
+    Tests can assert that the reranked order (not pgvector's order) appears in results.
+    """
+
+    def rerank(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
+        return list(reversed(chunks))

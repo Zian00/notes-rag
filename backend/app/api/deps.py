@@ -21,6 +21,7 @@ from app.rag.chunking import Chunker
 from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
 from app.rag.ocr import OcrProvider, TesseractOcr
 from app.rag.parsing import ParserDispatcher
+from app.rag.reranking import Reranker
 from app.rag.semantic_chunking import SemanticChunker
 from app.rag.storage import LocalFileStorage, StorageBackend
 from app.services.auth import AuthService
@@ -88,6 +89,17 @@ def get_parser(
 
 
 @lru_cache(maxsize=1)
+def get_reranker() -> Reranker:
+    """Constructs the Reranker exactly once per process and caches it.
+
+    TextCrossEncoder loads a 280 MB ONNX model on first call — same reasoning as
+    get_semantic_chunker(). The reranker is stateless and safe to share across
+    requests.
+    """
+    return Reranker()
+
+
+@lru_cache(maxsize=1)
 def get_semantic_chunker() -> SemanticChunker:
     """Constructs the SemanticChunker exactly once per process and caches it.
 
@@ -141,6 +153,8 @@ def get_retrieval_service(
         chunks=ChunkRepository(session),
         embeddings=embeddings,
         default_top_k=settings.retrieval_top_k,
+        candidate_k=settings.retrieval_candidate_k,
+        reranker=get_reranker(),
     )
 
 
