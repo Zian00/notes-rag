@@ -26,10 +26,19 @@ jobs:
             -e POSTGRES_USER=notes -e POSTGRES_PASSWORD=notes -e POSTGRES_DB=notes_rag \
             -p 5432:5432 \
             paradedb/paradedb:pg16 postgres -c shared_preload_libraries=pg_search
-          for i in $(seq 1 30); do
-            docker exec notes_rag_postgres pg_isready -U notes -d notes_rag && break
+          ready=""
+          for i in $(seq 1 60); do
+            if docker exec notes_rag_postgres pg_isready -U notes -d notes_rag; then
+              ready=1
+              break
+            fi
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "::error::Postgres did not become ready within 60s"
+            docker logs notes_rag_postgres
+            exit 1
+          fi
       - name: Install uv
         uses: astral-sh/setup-uv@v3
       - name: Set up Python
