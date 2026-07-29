@@ -145,3 +145,65 @@ async def test_update_chunk_position_updates_index_page_and_section(db_session):
     from app.models.document import DocumentChunk
     updated = await db_session.get(DocumentChunk, chunk.id)
     assert (updated.chunk_index, updated.page_number, updated.section) == (5, 9, "New Section")
+
+
+@pytest.mark.asyncio
+async def test_search_keyword_finds_exact_term_match(db_session):
+    """BM25 keyword search: an exact word match ranks above an unrelated chunk."""
+    user, doc = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many([
+        dict(document_id=doc.id, user_id=user.id, chunk_index=0,
+             content="photosynthesis converts sunlight into chemical energy",
+             content_hash=hash_content("photosynthesis"), embedding=_vec(0)),
+        dict(document_id=doc.id, user_id=user.id, chunk_index=1,
+             content="the mitochondria is the powerhouse of the cell",
+             content_hash=hash_content("mitochondria"), embedding=_vec(1)),
+    ])
+    await db_session.commit()
+
+    results = await repo.search_keyword(user.id, "photosynthesis", top_k=5)
+    assert len(results) == 1
+    assert "photosynthesis" in results[0].content
+
+
+@pytest.mark.asyncio
+async def test_search_keyword_is_scoped_to_user(db_session):
+    user_a, doc_a = await _user_and_doc(db_session)
+    user_b, doc_b = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [dict(document_id=doc_b.id, user_id=user_b.id, chunk_index=0,
+              content="quantum entanglement", content_hash=hash_content("quantum"),
+              embedding=_vec(0))]
+    )
+    await db_session.commit()
+    results = await repo.search_keyword(user_a.id, "quantum", top_k=5)
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_keyword_filters_by_course(db_session):
+    user, doc = await _user_and_doc(db_session, course="BIO")
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
+              content="cellular respiration", content_hash=hash_content("respiration"),
+              embedding=_vec(0))]
+    )
+    await db_session.commit()
+    assert len(await repo.search_keyword(user.id, "respiration", top_k=5, course="BIO")) == 1
+    assert await repo.search_keyword(user.id, "respiration", top_k=5, course="MATH") == []
+
+
+@pytest.mark.asyncio
+async def test_search_keyword_no_match_returns_empty(db_session):
+    user, doc = await _user_and_doc(db_session)
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
+              content="unrelated topic entirely", content_hash=hash_content("unrelated"),
+              embedding=_vec(0))]
+    )
+    await db_session.commit()
+    assert await repo.search_keyword(user.id, "nonexistentword", top_k=5) == []

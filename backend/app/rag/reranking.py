@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 from app.db.repositories.chunk import ChunkSearchResult
@@ -21,8 +23,14 @@ class Reranker:
         self._encoder: TextCrossEncoder = TextCrossEncoder(self._MODEL)
 
     def rerank(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
-        """Return chunks sorted by cross-encoder relevance score, highest first."""
+        """Return chunks sorted by cross-encoder relevance score, highest first.
+
+        Each result's .score is overwritten with the cross-encoder's own score —
+        the only value that's comparable across chunks regardless of which
+        retrieval path (vector or keyword) originally found them.
+        """
         if not chunks:
             return []
         scores = list(self._encoder.rerank(query, [c.content for c in chunks]))
-        return [c for _, c in sorted(zip(scores, chunks), key=lambda p: p[0], reverse=True)]
+        scored = [replace(c, score=float(s)) for s, c in zip(scores, chunks)]
+        return sorted(scored, key=lambda c: c.score, reverse=True)

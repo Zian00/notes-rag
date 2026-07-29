@@ -1,7 +1,8 @@
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, Select, delete, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
@@ -17,7 +18,10 @@ class ChunkSearchResult:
     content: str
     page_number: int | None
     section: str | None
-    score: float  # cosine similarity in [0, 1]; higher is closer
+    # Meaning depends on how this result was produced: cosine similarity in [0, 1]
+    # from search_similar, BM25 relevance from search_keyword, or (once a Reranker
+    # has run) the cross-encoder's relevance score — see Reranker.rerank().
+    score: float
 
 
 class ChunkRepository(BaseRepository[DocumentChunk]):
@@ -30,6 +34,37 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         self._session.add_all([DocumentChunk(**row) for row in rows])
         await self._session.flush()
 
+    def _base_chunk_query(
+        self,
+        user_id: uuid.UUID,
+        score_expr: ColumnElement[float],
+        course: str | None,
+        tags: list[str] | None,
+    ) -> Select[Any]:
+        """Shared SELECT shape for both retrieval paths: same columns, join, and
+        metadata filters — only the score expression and match predicate differ
+        between search_similar (cosine distance) and search_keyword (BM25)."""
+        stmt = (
+            select(
+                DocumentChunk.id,
+                DocumentChunk.document_id,
+                Document.filename,  # joined in so the API can show the source
+                Document.title,
+                DocumentChunk.content,
+                DocumentChunk.page_number,
+                DocumentChunk.section,
+                score_expr,
+            )
+            .join(Document, DocumentChunk.document_id == Document.id)
+            # per-user isolation: never return another user's chunks
+            .where(DocumentChunk.user_id == user_id)
+        )
+        if course is not None:
+            stmt = stmt.where(Document.course == course)
+        if tags:
+            stmt = stmt.where(Document.tags.contains(tags))  # JSONB @> : doc has all given tags
+        return stmt
+
     async def search_similar(
         self,
         user_id: uuid.UUID,
@@ -41,30 +76,13 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         # cosine_distance emits pgvector's `<=>` operator. Distance 0 = identical direction,
         # 2 = opposite; for our unit vectors it's in [0, 2]. We sort ascending (closest first).
         distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
-        stmt = (
-            select(
-                DocumentChunk.id,
-                DocumentChunk.document_id,
-                Document.filename,  # joined in so the API can show the source
-                Document.title,
-                DocumentChunk.content,
-                DocumentChunk.page_number,
-                DocumentChunk.section,
-                distance,
-            )
-            .join(Document, DocumentChunk.document_id == Document.id)
-            # per-user isolation: never return another user's chunks
-            .where(DocumentChunk.user_id == user_id)
-        )
-        # Optional metadata narrowing applied as plain SQL filters BEFORE the vector sort.
-        if course is not None:
-            stmt = stmt.where(Document.course == course)
-        if tags:
-            stmt = stmt.where(Document.tags.contains(tags))  # JSONB @> : doc has all given tags
         # order_by(distance) uses the labeled expression object (a bare "distance" string
         # would raise in SQLAlchemy 2.0). The HNSW index makes this ORDER BY fast.
-        stmt = stmt.order_by(distance).limit(top_k)
-
+        stmt = (
+            self._base_chunk_query(user_id, distance, course, tags)
+            .order_by(distance)
+            .limit(top_k)
+        )
         result = await self._session.execute(stmt)
         return [
             ChunkSearchResult(
@@ -76,6 +94,49 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
                 page_number=row.page_number,
                 section=row.section,
                 score=1.0 - float(row.distance),  # flip distance → similarity (higher = closer)
+            )
+            for row in result.all()
+        ]
+
+    async def search_keyword(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        top_k: int,
+        course: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[ChunkSearchResult]:
+        """BM25 keyword search via pg_search's bm25 index on document_chunks(content).
+
+        The @@@ operator and paradedb.match/score() functions aren't part of
+        SQLAlchemy's vocabulary, so they're injected as bound text() fragments.
+        """
+        if not query.strip():
+            return []
+        score_expr: ColumnElement[float] = literal_column(
+            "paradedb.score(document_chunks.id)"
+        ).label("score")
+        stmt = (
+            self._base_chunk_query(user_id, score_expr, course, tags)
+            .where(
+                text(
+                    "document_chunks.content @@@ paradedb.match('content', :kw_query)"
+                ).bindparams(kw_query=query)
+            )
+            .order_by(text("score DESC"))
+            .limit(top_k)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            ChunkSearchResult(
+                chunk_id=row.id,
+                document_id=row.document_id,
+                filename=row.filename,
+                title=row.title,
+                content=row.content,
+                page_number=row.page_number,
+                section=row.section,
+                score=float(row.score),
             )
             for row in result.all()
         ]

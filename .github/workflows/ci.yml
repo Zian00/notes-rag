@@ -10,26 +10,26 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: notes
-          POSTGRES_PASSWORD: notes
-          POSTGRES_DB: notes_rag
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U notes -d notes_rag"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://notes:notes@localhost:5432/notes_rag
       TEST_DATABASE_URL: postgresql+asyncpg://notes:notes@localhost:5432/notes_rag
       JWT_SECRET: ci-secret
     steps:
       - uses: actions/checkout@v4
+      - name: Start Postgres (paradedb, pg_search preloaded)
+        # GitHub Actions' `services:` block can't override a service container's
+        # command, but pg_search's BM25 index type requires shared_preload_libraries
+        # set at server startup (-c flag) — so Postgres is started manually here
+        # instead of via `services:`.
+        run: |
+          docker run -d --name notes_rag_postgres \
+            -e POSTGRES_USER=notes -e POSTGRES_PASSWORD=notes -e POSTGRES_DB=notes_rag \
+            -p 5432:5432 \
+            paradedb/paradedb:pg16 postgres -c shared_preload_libraries=pg_search
+          for i in $(seq 1 30); do
+            docker exec notes_rag_postgres pg_isready -U notes -d notes_rag && break
+            sleep 1
+          done
       - name: Install uv
         uses: astral-sh/setup-uv@v3
       - name: Set up Python

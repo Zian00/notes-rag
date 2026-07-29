@@ -1,7 +1,14 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # paradedb bundles both pg_search (BM25 keyword search) and pgvector (dense
+    # search) — one image covers both retrieval paths. pg16 tag matches the
+    # major version of the existing postgres_data volume.
+    image: paradedb/paradedb:pg16
     container_name: notes_rag_postgres
+    # pg_search's BM25 index type only works when its C extension is loaded at
+    # server startup (not just CREATE EXTENSION) — Postgres requires this for
+    # background-worker-backed index access methods.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
     environment:
       POSTGRES_USER: notes
       POSTGRES_PASSWORD: notes

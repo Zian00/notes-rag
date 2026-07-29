@@ -53,11 +53,20 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
 
     engine = create_async_engine(TEST_DATABASE_URL, future=True)
     async with engine.begin() as conn:
-        # The test DB is built via create_all (not Alembic), so the pgvector extension
-        # that migration 0001 adds to the dev DB must be enabled here too — the
-        # document_chunks.embedding Vector column needs it. Idempotent + non-destructive.
+        # The test DB is built via create_all (not Alembic), so the extensions that
+        # migrations 0001/0007 add to the dev DB must be enabled here too — vector
+        # for the embedding column, pg_search for the BM25 index below. Idempotent.
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_search"))
         await conn.run_sync(Base.metadata.create_all)
+        # BM25 index isn't part of Base.metadata (SQLAlchemy has no bm25 index
+        # construct) — created directly, same as migration 0007.
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS document_chunks_bm25_idx ON document_chunks "
+                "USING bm25 (id, content) WITH (key_field='id')"
+            )
+        )
         await conn.execute(text(f"TRUNCATE {_TRUNCATE_TABLES} RESTART IDENTITY CASCADE"))
     yield engine
     await engine.dispose()

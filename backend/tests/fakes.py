@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from app.db.repositories.chunk import ChunkSearchResult
@@ -140,12 +141,18 @@ class FakeEmbeddingsProvider(EmbeddingsProvider):
 
 
 class FakeReranker:
-    """Reverses chunk order — deterministic, no ONNX model loaded.
+    """Reverses chunk order and assigns descending synthetic scores — deterministic,
+    no ONNX model loaded.
 
     pgvector returns chunks ordered best-to-worst by cosine similarity; reversing
     simulates a cross-encoder that disagrees with the embedding model's ranking.
-    Tests can assert that the reranked order (not pgvector's order) appears in results.
+    Tests can assert both that the reranked order (not pgvector's order) appears in
+    results, AND that .score reflects this reranker's output (1.0, 0.5, 0.33, ...)
+    rather than the original cosine/BM25 value — mirroring the real Reranker's
+    contract of overwriting .score with its own relevance score.
     """
 
     def rerank(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
-        return list(reversed(chunks))
+        reversed_chunks = list(reversed(chunks))
+        n = len(reversed_chunks)
+        return [replace(c, score=(n - i) / n) for i, c in enumerate(reversed_chunks)]

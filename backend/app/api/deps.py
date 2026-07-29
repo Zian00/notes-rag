@@ -155,6 +155,7 @@ def get_retrieval_service(
         default_top_k=settings.retrieval_top_k,
         candidate_k=settings.retrieval_candidate_k,
         reranker=get_reranker(),
+        keyword_search=True,
     )
 
 
