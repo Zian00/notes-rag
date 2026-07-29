@@ -32,5 +32,5 @@ class Reranker:
         if not chunks:
             return []
         scores = list(self._encoder.rerank(query, [c.content for c in chunks]))
-        scored = [replace(c, score=float(s)) for s, c in zip(scores, chunks)]
+        scored = [replace(c, score=float(s)) for s, c in zip(scores, chunks, strict=True)]
         return sorted(scored, key=lambda c: c.score, reverse=True)
