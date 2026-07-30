@@ -43,6 +43,38 @@ services:
       - uploads_data:/data/uploads
     ports:
       - "8000:8000"
+    # Lets `worker` (below) wait for migrations + procrastinate schema apply to
+    # finish, not just for the container process to start.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    # Background job consumer for the procrastinate queue (see
+    # docs/superpowers/specs/2026-07-26-ingestion-quality-design.md §7.1) — runs
+    # process_document/process_document_replace as a separate process so heavy
+    # ingestion CPU work (semantic chunking, reranking) never competes with the
+    # API's event loop.
+    build: ./backend
+    container_name: notes_rag_worker
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notes:notes@postgres:5432/notes_rag
+      JWT_SECRET: dev-only-change-me
+      ENVIRONMENT: development
+      UPLOAD_DIR: /data/uploads
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - uploads_data:/data/uploads
+    # python -m procrastinate (not the bare console script) — only the module
+    # form puts /app on sys.path so the dotted --app path resolves (see Dockerfile).
+    command: ["uv", "run", "--no-sync", "python", "-m", "procrastinate", "--app", "app.jobs.ingestion_tasks.app", "worker"]
 
 volumes:
   postgres_data:

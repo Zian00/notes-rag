@@ -6,6 +6,10 @@ from google.genai import types
 
 from app.core.config import Settings
 
+# Gemini's batchEmbedContents endpoint rejects any call carrying more than this
+# many texts (400 INVALID_ARGUMENT) — embed_documents splits into sub-batches.
+_MAX_BATCH_SIZE = 100
+
 
 def l2_normalize(vector: list[float]) -> list[float]:
     """Scale to unit length. Required because Gemini only normalizes the full
@@ -61,7 +65,10 @@ class GeminiEmbeddingsProvider(EmbeddingsProvider):
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []  # the API rejects an empty batch; nothing to embed anyway
-        return self._embed(texts, self._doc_task)
+        embeddings: list[list[float]] = []
+        for i in range(0, len(texts), _MAX_BATCH_SIZE):
+            embeddings.extend(self._embed(texts[i : i + _MAX_BATCH_SIZE], self._doc_task))
+        return embeddings
 
     def embed_query(self, text: str) -> list[float]:
         return self._embed([text], self._query_task)[0]  # one text in → one vector out

@@ -12,6 +12,10 @@ from app.api import auth, chat, conversations, documents, health, search
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import get_engine, get_sessionmaker
+# Importing via ingestion_tasks (not app.jobs.app) so the @app.task-decorated
+# process_document/process_document_replace register on this same App object —
+# deps.py's defer_async() calls need the tasks registered on the instance we open.
+from app.jobs.ingestion_tasks import app as job_app
 from app.rag.embeddings import GeminiEmbeddingsProvider
 from app.rag.graph import build_rag_graph
 from app.rag.llm import build_chat_model
@@ -35,6 +39,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     )
     await pool.open()
 
+    # Procrastinate's connector pool must be opened before any job can be
+    # deferred — POST /documents calls process_document.defer_async() (deps.py),
+    # which otherwise raises AppNotOpen.
+    await job_app.open_async()
+
     # psycopg_pool's generic type doesn't reflect row_factory at the type level,
     # so we suppress the arg-type mismatch — at runtime the pool IS dict-row typed.
     checkpointer = AsyncPostgresSaver(pool)  # type: ignore[arg-type]
@@ -52,6 +61,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         # Shutdown: close the psycopg pool first, then dispose the SQLAlchemy engine.
+        await job_app.close_async()
         await pool.close()
         await get_engine().dispose()
 
