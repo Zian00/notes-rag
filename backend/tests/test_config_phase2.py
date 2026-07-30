@@ -8,7 +8,8 @@ def _settings(**over: object) -> Settings:
 
 def test_phase2_defaults():
     s = _settings()
-    assert s.embedding_model == "gemini-embedding-001"
+    assert s.embedding_provider == "openai"
+    assert s.embedding_model == "text-embedding-3-small"
     assert s.embedding_dimension == 1536
     assert s.embedding_doc_task_type == "RETRIEVAL_DOCUMENT"
     assert s.embedding_query_task_type == "RETRIEVAL_QUERY"

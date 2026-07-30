@@ -39,6 +39,7 @@ services:
       UPLOAD_DIR: /data/uploads
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - uploads_data:/data/uploads
     ports:
@@ -70,6 +71,7 @@ services:
       UPLOAD_DIR: /data/uploads
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - uploads_data:/data/uploads
     # python -m procrastinate (not the bare console script) — only the module

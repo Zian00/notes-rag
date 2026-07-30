@@ -3,12 +3,16 @@ from abc import ABC, abstractmethod
 
 from google import genai
 from google.genai import types
+from openai import OpenAI
 
 from app.core.config import Settings
 
 # Gemini's batchEmbedContents endpoint rejects any call carrying more than this
 # many texts (400 INVALID_ARGUMENT) — embed_documents splits into sub-batches.
-_MAX_BATCH_SIZE = 100
+_GEMINI_MAX_BATCH_SIZE = 100
+
+# OpenAI's embeddings.create endpoint's documented max array length per call.
+_OPENAI_MAX_BATCH_SIZE = 2048
 
 
 def l2_normalize(vector: list[float]) -> list[float]:
@@ -66,9 +70,46 @@ class GeminiEmbeddingsProvider(EmbeddingsProvider):
         if not texts:
             return []  # the API rejects an empty batch; nothing to embed anyway
         embeddings: list[list[float]] = []
-        for i in range(0, len(texts), _MAX_BATCH_SIZE):
-            embeddings.extend(self._embed(texts[i : i + _MAX_BATCH_SIZE], self._doc_task))
+        for i in range(0, len(texts), _GEMINI_MAX_BATCH_SIZE):
+            embeddings.extend(
+                self._embed(texts[i : i + _GEMINI_MAX_BATCH_SIZE], self._doc_task)
+            )
         return embeddings
 
     def embed_query(self, text: str) -> list[float]:
         return self._embed([text], self._query_task)[0]  # one text in → one vector out
+
+
+class OpenAIEmbeddingsProvider(EmbeddingsProvider):
+    """OpenAI embeddings (text-embedding-3-small by default). No task-type asymmetry
+    (unlike Gemini) — OpenAI's embeddings API has no document/query distinction."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._model = settings.embedding_model
+        self._dim = settings.embedding_dimension
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        resp = self._client.embeddings.create(
+            input=texts, model=self._model, dimensions=self._dim
+        )
+        return [list(e.embedding) for e in resp.data]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        embeddings: list[list[float]] = []
+        for i in range(0, len(texts), _OPENAI_MAX_BATCH_SIZE):
+            embeddings.extend(self._embed(texts[i : i + _OPENAI_MAX_BATCH_SIZE]))
+        return embeddings
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text])[0]
+
+
+def build_embeddings_provider(settings: Settings) -> EmbeddingsProvider:
+    """Construct the configured EmbeddingsProvider — mirrors build_chat_model's
+    provider-selection pattern (app/rag/llm.py) for the LLM side."""
+    if settings.embedding_provider == "openai":
+        return OpenAIEmbeddingsProvider(settings)
+    return GeminiEmbeddingsProvider(settings)

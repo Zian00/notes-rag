@@ -7,7 +7,7 @@ from app.db.repositories.document import DocumentRepository
 from app.db.session import get_sessionmaker
 from app.jobs.app import app
 from app.rag.chunking import Chunker
-from app.rag.embeddings import GeminiEmbeddingsProvider
+from app.rag.embeddings import build_embeddings_provider
 from app.rag.ocr import TesseractOcr
 from app.rag.parsing import ParserDispatcher
 from app.rag.semantic_chunking import SemanticChunker
@@ -49,7 +49,7 @@ async def process_document(document_id: str) -> None:
                 chunk_overlap_tokens=settings.chunk_overlap_tokens,
                 semantic_chunker=_get_semantic_chunker(),
             ),
-            embeddings=GeminiEmbeddingsProvider(settings),
+            embeddings=build_embeddings_provider(settings),
             embedding_model=settings.embedding_model,
             embedding_dimension=settings.embedding_dimension,
         )
@@ -81,7 +81,7 @@ async def process_document_replace(
                 chunk_overlap_tokens=settings.chunk_overlap_tokens,
                 semantic_chunker=_get_semantic_chunker(),
             ),
-            embeddings=GeminiEmbeddingsProvider(settings),
+            embeddings=build_embeddings_provider(settings),
             embedding_model=settings.embedding_model,
             embedding_dimension=settings.embedding_dimension,
         )

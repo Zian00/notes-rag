@@ -12,7 +12,7 @@ async def test_process_document_task_delegates_to_ingestion_service_process():
     fake_process = AsyncMock()
 
     with patch("app.jobs.ingestion_tasks.IngestionService") as FakeService, \
-         patch("app.jobs.ingestion_tasks.GeminiEmbeddingsProvider"):
+         patch("app.jobs.ingestion_tasks.build_embeddings_provider"):
         FakeService.return_value.process = fake_process
         await ingestion_tasks.process_document(document_id=str(document_id))
 
@@ -27,7 +27,7 @@ async def test_process_document_replace_task_delegates_to_ingestion_service():
     fake_process_replace = AsyncMock()
 
     with patch("app.jobs.ingestion_tasks.IngestionService") as FakeService, \
-         patch("app.jobs.ingestion_tasks.GeminiEmbeddingsProvider"):
+         patch("app.jobs.ingestion_tasks.build_embeddings_provider"):
         FakeService.return_value.process_replace = fake_process_replace
         await ingestion_tasks.process_document_replace(
             document_id=str(document_id),

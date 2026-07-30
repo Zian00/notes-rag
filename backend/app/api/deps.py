@@ -18,7 +18,7 @@ from app.db.session import get_db, get_sessionmaker
 from app.jobs.ingestion_tasks import process_document, process_document_replace
 from app.models.user import User
 from app.rag.chunking import Chunker
-from app.rag.embeddings import EmbeddingsProvider, GeminiEmbeddingsProvider
+from app.rag.embeddings import EmbeddingsProvider, build_embeddings_provider
 from app.rag.ocr import OcrProvider, TesseractOcr
 from app.rag.parsing import ParserDispatcher
 from app.rag.reranking import Reranker
@@ -74,7 +74,7 @@ def get_ocr(settings: Settings = Depends(get_settings)) -> OcrProvider:  # noqa:
 
 
 def get_embeddings(settings: Settings = Depends(get_settings)) -> EmbeddingsProvider:  # noqa: B008
-    return GeminiEmbeddingsProvider(settings)
+    return build_embeddings_provider(settings)
 
 
 def get_parser(

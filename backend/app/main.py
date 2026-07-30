@@ -16,7 +16,7 @@ from app.db.session import get_engine, get_sessionmaker
 # process_document/process_document_replace register on this same App object —
 # deps.py's defer_async() calls need the tasks registered on the instance we open.
 from app.jobs.ingestion_tasks import app as job_app
-from app.rag.embeddings import GeminiEmbeddingsProvider
+from app.rag.embeddings import build_embeddings_provider
 from app.rag.graph import build_rag_graph
 from app.rag.llm import build_chat_model
 
@@ -51,8 +51,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await checkpointer.setup()
 
     chat_model = build_chat_model(settings)
-    # Use the same GeminiEmbeddingsProvider constructor as get_embeddings() in deps.py.
-    embeddings = GeminiEmbeddingsProvider(settings)
+    # Same factory as get_embeddings() in deps.py — picks the configured provider.
+    embeddings = build_embeddings_provider(settings)
     _app.state.chat_graph = build_rag_graph(
         chat_model, embeddings, get_sessionmaker(), settings, checkpointer
     )

@@ -33,7 +33,13 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # Embeddings (Phase 2)
-    embedding_model: str = "gemini-embedding-001"
+    # "openai" is the default (not "google") deliberately — Gemini's free-tier
+    # embed_content rate limit (100 req/min) made it unsuitable as the default
+    # ingestion path; OpenAI is the day-to-day provider going forward, kept
+    # config-switchable back to Gemini rather than removed.
+    embedding_provider: Literal["google", "openai"] = "openai"
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536
     embedding_doc_task_type: str = "RETRIEVAL_DOCUMENT"
     embedding_query_task_type: str = "RETRIEVAL_QUERY"
