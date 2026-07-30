@@ -22,8 +22,23 @@ GRADE_SYSTEM = (
     "Answer strictly with the structured schema."
 )
 
-# System prompt for the rewrite node: produce a better search query.
+# System prompt for the rewrite node: produce a better search query, informed by why
+# the last attempt failed and what was actually retrieved instead of a blind rephrase.
 REWRITE_SYSTEM = (
-    "The previous search returned weak results. Rewrite the user's question into a better "
-    "search query that is specific and keyword-rich. Return ONLY the rewritten query."
+    "The previous search returned weak or irrelevant results. You are given the reason "
+    "the grader rejected it and the passages that were actually retrieved. Using that "
+    "information — especially the vocabulary used in the retrieved passages, if any were "
+    "returned — rewrite the question into a better, more specific, keyword-rich search "
+    "query. Return ONLY the rewritten query."
+)
+
+# System prompt for the condense node: resolve follow-up references using chat history,
+# before the first retrieval attempt of a turn.
+CONDENSE_SYSTEM = (
+    "Given the conversation so far, rewrite the user's latest message into a standalone "
+    "question that can be understood without the earlier messages. Resolve pronouns and "
+    "implicit references (e.g. 'that', 'it', 'this topic') using the conversation history. "
+    "If the latest message is already standalone, or is a greeting or meta question that "
+    "needs no notes lookup, return it unchanged. Return ONLY the resulting question, "
+    "nothing else."
 )

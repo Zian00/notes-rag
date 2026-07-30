@@ -89,10 +89,11 @@ async def test_real_postgres_checkpointer_persists_across_turns(
 
     model = FakeChatModel(
         responses=[
-            # Turn 1: agent (direct answer, no tool call) → generate
+            # Turn 1: (no prior history → condense skipped) → agent → generate
             AIMessage("Hello, this is turn one."),  # agent
             AIMessage("Hello, this is turn one."),  # generate
-            # Turn 2: agent → generate
+            # Turn 2: condense (prior history exists) → agent → generate
+            AIMessage("what did I say before?"),  # condense
             AIMessage("This is turn two, continuing from turn one."),  # agent
             AIMessage("This is turn two, continuing from turn one."),  # generate
         ]

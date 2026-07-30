@@ -161,7 +161,7 @@ async def test_stream_new_conversation(_engine: AsyncEngine) -> None:
     model = FakeChatModel(
         responses=[
             _retrieve_call("heap"),
-            Grade(relevant=True),
+            Grade(relevant=True, reason="context answers the question"),
             AIMessage("A heap is a tree-based structure [1]."),
         ]
     )
@@ -207,7 +207,13 @@ async def test_stream_wrong_owner_raises(_engine: AsyncEngine) -> None:
 
     # Create a conversation as owner.
     svc = _build_service(
-        FakeChatModel(responses=[_retrieve_call("x"), Grade(relevant=True), AIMessage("answer")]),
+        FakeChatModel(
+            responses=[
+                _retrieve_call("x"),
+                Grade(relevant=True, reason="context answers the question"),
+                AIMessage("answer"),
+            ]
+        ),
         maker,
     )
     frames = await _collect_frames(svc.stream_answer(
@@ -247,7 +253,11 @@ async def test_stream_reuses_existing_conversation(_engine: AsyncEngine) -> None
 
     # First turn: create a new conversation.
     model1 = FakeChatModel(
-        responses=[_retrieve_call("heap", "t1"), Grade(relevant=True), AIMessage("answer 1")]
+        responses=[
+            _retrieve_call("heap", "t1"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("answer 1"),
+        ]
     )
     # Use a shared InMemorySaver so turn 2 can resume the same thread.
     checkpointer = InMemorySaver()
@@ -278,9 +288,15 @@ async def test_stream_reuses_existing_conversation(_engine: AsyncEngine) -> None
     await asyncio.sleep(0.05)
 
     # Second turn: re-use the same conversation_id.
-    # Swap in a fresh model with responses for turn 2.
+    # Swap in a fresh model with responses for turn 2. Prior history now exists, so
+    # condense makes an LLM call first — its response is echoed back unchanged.
     model2 = FakeChatModel(
-        responses=[_retrieve_call("heap", "t2"), Grade(relevant=True), AIMessage("answer 2")]
+        responses=[
+            AIMessage("and what about a min-heap?"),  # condense
+            _retrieve_call("heap", "t2"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("answer 2"),
+        ]
     )
     graph2 = build_rag_graph(
         chat_model=model2,
@@ -330,7 +346,11 @@ async def test_list_conversations_newest_first(_engine: AsyncEngine) -> None:
 
     async def _make_convo(question: str) -> uuid.UUID:
         model = FakeChatModel(
-            responses=[_retrieve_call(question), Grade(relevant=True), AIMessage("answer")]
+            responses=[
+                _retrieve_call(question),
+                Grade(relevant=True, reason="context answers the question"),
+                AIMessage("answer"),
+            ]
         )
         graph = build_rag_graph(
             chat_model=model,
@@ -387,7 +407,7 @@ async def test_get_detail_returns_history(_engine: AsyncEngine) -> None:
     model = FakeChatModel(
         responses=[
             _retrieve_call("heap"),
-            Grade(relevant=True),
+            Grade(relevant=True, reason="context answers the question"),
             AIMessage("A heap is a tree-based structure."),
         ]
     )
@@ -425,6 +445,89 @@ async def test_get_detail_returns_history(_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_detail_no_synthetic_messages_after_rewrite_agentic(
+    _engine: AsyncEngine,
+) -> None:
+    """A rewrite firing mid-turn must not leak a synthetic 'user' message into
+    GET /conversations/{id} history — regression test for the bug where rewrite
+    used to persist HumanMessage(new_q) into the conversation transcript."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    # agent → retrieve → grade(False) → rewrite → agent → retrieve → grade(True) → generate
+    model = FakeChatModel(
+        responses=[
+            _retrieve_call("heap"),
+            Grade(relevant=False, reason="off-topic"),
+            AIMessage("better search query"),  # rewrite
+            _retrieve_call("better search query", "t2"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure."),
+        ]
+    )
+    svc = _build_service(model, maker)
+
+    frames = await _collect_frames(svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="what is a heap?",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+
+    detail = await svc.get_detail(convo_id, user.id)
+    messages = detail["messages"]
+    user_msgs = [m for m in messages if m["role"] == "user"]
+
+    assert len(user_msgs) == 1, f"Expected exactly 1 user message, got: {user_msgs}"
+    assert user_msgs[0]["content"] == "what is a heap?"
+
+
+@pytest.mark.asyncio
+async def test_get_detail_no_synthetic_messages_after_rewrite_linear(
+    _engine: AsyncEngine,
+) -> None:
+    """Same regression, linear path (agentic_retrieval=False, no agent tool-call step)."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    # force_retrieve → grade(False) → rewrite → force_retrieve → grade(True) → generate
+    model = FakeChatModel(
+        responses=[
+            Grade(relevant=False, reason="off-topic"),
+            AIMessage("better search query"),  # rewrite
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure."),
+        ]
+    )
+    graph = build_rag_graph(
+        chat_model=model,
+        embeddings=FakeEmbeddingsProvider(DIM),
+        sessionmaker=maker,
+        settings=_settings(agentic_retrieval=False),
+        checkpointer=InMemorySaver(),
+    )
+    svc = ChatService(graph, maker)
+
+    frames = await _collect_frames(svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="what is a heap?",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+
+    detail = await svc.get_detail(convo_id, user.id)
+    messages = detail["messages"]
+    user_msgs = [m for m in messages if m["role"] == "user"]
+
+    assert len(user_msgs) == 1, f"Expected exactly 1 user message, got: {user_msgs}"
+    assert user_msgs[0]["content"] == "what is a heap?"
+
+
+@pytest.mark.asyncio
 async def test_get_detail_wrong_owner_raises(_engine: AsyncEngine) -> None:
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
     async with maker() as s:
@@ -435,7 +538,11 @@ async def test_get_detail_wrong_owner_raises(_engine: AsyncEngine) -> None:
     checkpointer = InMemorySaver()
     settings = _settings()
     model = FakeChatModel(
-        responses=[_retrieve_call("x"), Grade(relevant=True), AIMessage("answer")]
+        responses=[
+            _retrieve_call("x"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("answer"),
+        ]
     )
     graph = build_rag_graph(
         chat_model=model,
@@ -532,7 +639,7 @@ async def test_delete_conversation(_engine: AsyncEngine) -> None:
     model = FakeChatModel(
         responses=[
             _retrieve_call("heap"),
-            Grade(relevant=True),
+            Grade(relevant=True, reason="context answers the question"),
             AIMessage("A heap is a tree-based structure."),
         ]
     )

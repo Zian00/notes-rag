@@ -112,7 +112,7 @@ async def test_chat_happy_path(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "t1"}],
         ),
-        Grade(relevant=True),
+        Grade(relevant=True, reason="context answers the question"),
         AIMessage("A heap is a tree-based structure [1]."),
     ]
 
@@ -163,7 +163,7 @@ async def test_chat_second_turn_continues_thread(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "t1"}],
         ),
-        Grade(relevant=True),
+        Grade(relevant=True, reason="context answers the question"),
         AIMessage("A heap is a tree-based structure [1]."),
     ]
 
@@ -175,14 +175,16 @@ async def test_chat_second_turn_continues_thread(
     assert isinstance(meta1, dict)
     convo_id = meta1["conversation_id"]
 
-    # Turn 2: queue responses for the follow-up.
+    # Turn 2: queue responses for the follow-up. Prior history now exists, so condense
+    # makes an LLM call first.
     # Reset _idx so the new response list is consumed from the beginning.
     fake_chat_model.responses = [
+        AIMessage("what about a min-heap?"),  # condense
         AIMessage(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "min-heap"}, "id": "t2"}],
         ),
-        Grade(relevant=True),
+        Grade(relevant=True, reason="context answers the question"),
         AIMessage("A min-heap is a heap where the smallest element is at the root [1]."),
     ]
     object.__setattr__(fake_chat_model, "_idx", 0)
@@ -242,7 +244,7 @@ async def test_chat_user_isolation(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "t1"}],
         ),
-        Grade(relevant=True),
+        Grade(relevant=True, reason="context answers the question"),
         AIMessage("A heap is a tree-based structure."),
     ]
     resp_a = await auth_client.post("/chat", json={"question": "what is a heap?"})

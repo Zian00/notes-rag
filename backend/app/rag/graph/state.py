@@ -11,4 +11,8 @@ class RagState(TypedDict, total=False):
     question: str  # current (possibly rewritten) query
     context: list[dict[str, Any]]  # chunks from the latest retrieve/get-document call
     relevant: bool  # grade verdict: is context relevant to the question?
+    # Named grade_reason, not reason: RagState is one flat namespace shared by every
+    # node's return patch, so a bare "reason" would invite collisions with any future
+    # per-node reason field. Grader's explanation for the verdict; consumed by rewrite.
+    grade_reason: str
     retry_count: int  # number of rewrites so far (capped at max_grade_retries)

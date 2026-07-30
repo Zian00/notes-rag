@@ -71,6 +71,78 @@ async def _seed(session: AsyncSession) -> tuple[Any, Any]:
 
 
 # ---------------------------------------------------------------------------
+# condense node
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_condense_skips_on_first_message(_engine: AsyncEngine) -> None:
+    """No prior turn to resolve against → condense makes no LLM call and returns {}."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[])  # would raise IndexError if called
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("what is a heap?")],
+        "question": "what is a heap?",
+        "context": [],
+        "retry_count": 0,
+    }
+    result = await nodes["condense"](state, _CONFIG)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_condense_resolves_followup_using_history(_engine: AsyncEngine) -> None:
+    """A follow-up question is rewritten into a standalone one using prior turns."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[AIMessage("what about a min-heap?")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [
+            HumanMessage("what is a heap?"),
+            AIMessage("A heap is a tree-based structure."),
+            HumanMessage("what about a min one?"),
+        ],
+        "question": "what about a min one?",
+        "context": [],
+        "retry_count": 0,
+    }
+    result = await nodes["condense"](state, _CONFIG)
+    assert result == {"question": "what about a min-heap?"}
+
+
+@pytest.mark.asyncio
+async def test_condense_passes_through_already_standalone_question(
+    _engine: AsyncEngine,
+) -> None:
+    """An already-standalone question is returned unchanged (per CONDENSE_SYSTEM's
+    instruction not to rewrite what doesn't need it)."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    # The fake model echoes the question back verbatim, simulating a real LLM
+    # correctly recognising nothing needs resolving.
+    model = FakeChatModel(responses=[AIMessage("what is a binary search tree?")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [
+            HumanMessage("what is a heap?"),
+            AIMessage("A heap is a tree-based structure."),
+            HumanMessage("what is a binary search tree?"),
+        ],
+        "question": "what is a binary search tree?",
+        "context": [],
+        "retry_count": 0,
+    }
+    result = await nodes["condense"](state, _CONFIG)
+    assert result == {"question": "what is a binary search tree?"}
+
+
+# ---------------------------------------------------------------------------
 # agent node
 # ---------------------------------------------------------------------------
 
@@ -126,6 +198,38 @@ async def test_agent_direct_answer(_engine: AsyncEngine) -> None:
     last = result["messages"][-1]
     assert not getattr(last, "tool_calls", None)
     assert "Hello" in last.content
+
+
+@pytest.mark.asyncio
+async def test_agent_surfaces_question_ephemerally(_engine: AsyncEngine) -> None:
+    """agent's LLM call sees the current (condensed/rewritten) question, but the
+    ephemeral note is never persisted back into the state patch's messages."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("min-heaps keep the smallest element on top")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("what about a min one?")],
+        "question": "what about a min-heap?",  # resolved by condense/rewrite
+        "context": [],
+        "retry_count": 0,
+    }
+    result = await nodes["agent"](state, _CONFIG)
+
+    full_text = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
+    assert "what about a min-heap?" in full_text
+    # Only the model's own response is persisted — no ephemeral note leaks into state.
+    assert len(result["messages"]) == 1
+    assert all(not isinstance(m, HumanMessage) for m in result["messages"])
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +306,9 @@ async def test_tools_node_list_docs_no_context(_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_grade_sets_relevant_true(_engine: AsyncEngine) -> None:
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    model = FakeChatModel(responses=[Grade(relevant=True)])
+    model = FakeChatModel(
+        responses=[Grade(relevant=True, reason="context answers the question")]
+    )
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
     nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
 
@@ -224,7 +330,9 @@ async def test_grade_sets_relevant_true(_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_grade_sets_relevant_false(_engine: AsyncEngine) -> None:
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    model = FakeChatModel(responses=[Grade(relevant=False)])
+    model = FakeChatModel(
+        responses=[Grade(relevant=False, reason="context does not answer the question")]
+    )
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
     nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
 
@@ -241,6 +349,31 @@ async def test_grade_sets_relevant_false(_engine: AsyncEngine) -> None:
     }
     result = await nodes["grade"](state, _CONFIG)
     assert result["relevant"] is False
+
+
+@pytest.mark.asyncio
+async def test_grade_reason_flows_into_state(_engine: AsyncEngine) -> None:
+    """grade's structured reason is surfaced as grade_reason in the state patch."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(
+        responses=[Grade(relevant=False, reason="context is about stacks, not heaps")]
+    )
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("q?")],
+        "question": "q?",
+        "context": [
+            {
+                "content": "a stack is LIFO", "title": "L2",
+                "filename": "l2.pdf", "page_number": None, "section": None,
+            }
+        ],
+        "retry_count": 0,
+    }
+    result = await nodes["grade"](state, _CONFIG)
+    assert result["grade_reason"] == "context is about stacks, not heaps"
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +398,46 @@ async def test_rewrite_increments_retry_count(_engine: AsyncEngine) -> None:
 
     assert result["retry_count"] == 1
     assert result["question"] == "better search query"
-    # A new HumanMessage with the rewritten query should be appended.
-    rewritten = [m for m in result["messages"] if isinstance(m, HumanMessage)]
-    assert any("better search query" in m.content for m in rewritten)
+    # Regression test: rewrite must NOT persist a synthetic message into the
+    # conversation history (previously it appended HumanMessage(new_q) — the bug
+    # ChatService.get_detail would echo back as a fake "user" turn).
+    assert "messages" not in result
+
+
+@pytest.mark.asyncio
+async def test_rewrite_prompt_includes_reason_and_context(_engine: AsyncEngine) -> None:
+    """rewrite's LLM call is informed by grade's reason and the failed context, not a
+    blind rephrase of the original question."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("back-propagation training")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("how does backprop work")],
+        "question": "how does backprop work",
+        "context": [
+            {
+                "content": "back-propagation computes gradients layer by layer",
+                "title": "L3", "filename": "l3.pdf", "page_number": None, "section": None,
+            }
+        ],
+        "grade_reason": "vocabulary mismatch: notes use 'back-propagation', not 'backprop'",
+        "retry_count": 0,
+    }
+    await nodes["rewrite"](state, _CONFIG)
+
+    full_text = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
+    assert "vocabulary mismatch" in full_text
+    assert "back-propagation computes gradients" in full_text
 
 
 @pytest.mark.asyncio

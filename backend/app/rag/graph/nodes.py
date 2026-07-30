@@ -17,7 +17,13 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END
 from pydantic import BaseModel, Field
 
-from app.rag.graph.prompts import AGENT_SYSTEM, GENERATE_SYSTEM, GRADE_SYSTEM, REWRITE_SYSTEM
+from app.rag.graph.prompts import (
+    AGENT_SYSTEM,
+    CONDENSE_SYSTEM,
+    GENERATE_SYSTEM,
+    GRADE_SYSTEM,
+    REWRITE_SYSTEM,
+)
 from app.rag.graph.state import RagState
 from app.rag.graph.tools import format_chunks_for_llm
 
@@ -29,11 +35,24 @@ _CONTEXT_TOOLS = {"retrieve_notes", "get_document_content"}
 # whole-document fetch (never accidental), so it routes back to the agent, not grade.
 _GRADE_TOOLS = {"retrieve_notes"}
 
+# A turn's messages list always contains at least the just-added HumanMessage; anything
+# at or below this means there is no prior turn yet, so condense has nothing to resolve.
+_MIN_MESSAGES_FOR_CONDENSE = 2
+
+
+def _message_text(resp: Any) -> str:
+    """Extract plain text from an LLM response, whatever its content shape."""
+    return resp.content if isinstance(resp.content, str) else str(resp.content)
+
 
 class Grade(BaseModel):
     """Structured verdict from the grader LLM."""
 
     relevant: bool = Field(description="True if the context can answer the question.")
+    reason: str = Field(
+        description="One sentence: why the context is or isn't sufficient — "
+        "what's missing or mismatched, if not relevant."
+    )
 
 
 def make_nodes(
@@ -63,14 +82,36 @@ def make_nodes(
         """Trim message history to the last history_limit messages."""
         return state["messages"][-history_limit:]
 
+    async def condense(state: RagState, config: RunnableConfig) -> dict[str, Any]:
+        """Resolve follow-up references in the latest question using prior turns.
+
+        Skipped on a conversation's first message: there is no prior turn to resolve
+        references against, so the LLM call would be a pure latency cost with no effect.
+        Only ``question`` changes here — ``messages`` is left untouched so the persisted
+        transcript still reflects exactly what the user typed; ``agent`` surfaces the
+        resolved question to its own tool-call reasoning via an ephemeral note instead
+        (see below) rather than this node injecting a synthetic message into history.
+        """
+        if len(state["messages"]) < _MIN_MESSAGES_FOR_CONDENSE:
+            return {}
+        resp = await model.ainvoke([SystemMessage(CONDENSE_SYSTEM), *_recent(state)], config)
+        return {"question": _message_text(resp)}
+
     async def agent(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Decide whether to call a tool or answer directly.
 
         The LLM receives a system prompt + recent conversation history. If it decides to
         call a tool, the returned AIMessage has ``tool_calls``; otherwise it's a direct
         answer that goes straight to generate.
+
+        The current ``question`` (possibly resolved by ``condense`` or rewritten by
+        ``rewrite``) is appended as an ephemeral note — never persisted to ``messages`` —
+        so tool-call reasoning uses the improved question without the visible conversation
+        ever showing a query the user didn't literally type.
         """
         msgs = [SystemMessage(AGENT_SYSTEM), *_recent(state)]
+        if state.get("question"):
+            msgs.append(HumanMessage(f"(Current question to answer: {state['question']})"))
         resp = await agent_model.ainvoke(msgs, config)
         return {"messages": [resp]}
 
@@ -127,22 +168,33 @@ def make_nodes(
         # grader returns a Grade pydantic object; the type is Any in mypy due to
         # with_structured_output returning a broad union — cast for safety.
         verdict: Grade = raw  # type: ignore[assignment]
-        return {"relevant": verdict.relevant}
+        return {"relevant": verdict.relevant, "grade_reason": verdict.reason}
 
     async def rewrite(state: RagState, config: RunnableConfig) -> dict[str, Any]:
-        """Rewrite the question for better retrieval; increment the retry counter.
+        """Rewrite the question for better retrieval, informed by why the last attempt failed.
 
-        The rewritten question is added to messages as a HumanMessage so the agent
-        sees it and can call retrieve_notes again with the improved query.
+        Unlike a blind rephrase, this sees grade's reason and the actual chunks that were
+        retrieved-but-rejected, so it can pick up vocabulary mismatches (e.g. notes say
+        "back-propagation", the question said "backprop") instead of guessing blind.
+        Does not touch ``messages`` — see ``agent``'s ephemeral-note mechanism for how the
+        rewritten question reaches the next tool-call decision without being persisted.
         """
+        ctx = format_chunks_for_llm(state.get("context", []))
+        reason = state.get("grade_reason", "")
         resp = await model.ainvoke(
-            [SystemMessage(REWRITE_SYSTEM), HumanMessage(state["question"])], config
+            [
+                SystemMessage(REWRITE_SYSTEM),
+                HumanMessage(
+                    f"Original question: {state['question']}\n\n"
+                    f"Why the last search failed: {reason}\n\n"
+                    f"What was retrieved instead:\n{ctx}"
+                ),
+            ],
+            config,
         )
-        new_q = resp.content if isinstance(resp.content, str) else str(resp.content)
         return {
-            "question": new_q,
+            "question": _message_text(resp),
             "retry_count": state.get("retry_count", 0) + 1,
-            "messages": [HumanMessage(new_q)],
         }
 
     async def generate(state: RagState, config: RunnableConfig) -> dict[str, Any]:
@@ -164,6 +216,7 @@ def make_nodes(
         return {"messages": [resp]}
 
     return {
+        "condense": condense,
         "agent": agent,
         "tools": tools_node,
         "grade": grade,

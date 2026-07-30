@@ -92,7 +92,7 @@ async def _do_chat(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "t1"}],
         ),
-        Grade(relevant=True),
+        Grade(relevant=True, reason="context answers the question"),
         AIMessage("A heap is a tree-based structure [1]."),
     ]
     body: dict = {"question": question}

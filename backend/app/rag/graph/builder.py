@@ -4,16 +4,18 @@
 ``CompiledStateGraph`` that is stored on ``app.state`` at startup and shared
 across all requests.
 
-Two execution paths are wired depending on ``settings.agentic_retrieval``:
+Both paths start with ``condense`` (resolves follow-up references using prior turns,
+skipped on a conversation's first message), then diverge depending on
+``settings.agentic_retrieval``:
 
-- **Agentic (default, True):** START → agent → (tool call? tools : generate).
+- **Agentic (default, True):** START → condense → agent → (tool call? tools : generate).
   The LLM decides when and which tool to invoke. ``retrieve_notes`` results are
   graded; weak results trigger a query rewrite (bounded by ``max_grade_retries``).
 
-- **Linear fallback (False):** START → force_retrieve → tools → grade → ... → generate.
-  For weak/local LLMs that can't reliably call tools: always retrieve first, skip the
-  agent's tool-decision, preserve grade → rewrite → generate. Useful when the model
-  struggles with tool-call formatting.
+- **Linear fallback (False):** START → condense → force_retrieve → tools → grade → ...
+  → generate. For weak/local LLMs that can't reliably call tools: always retrieve
+  first, skip the agent's tool-decision, preserve grade → rewrite → generate. Useful
+  when the model struggles with tool-call formatting.
 """
 
 from typing import Any
@@ -67,9 +69,15 @@ def build_rag_graph(
     for name, fn in nodes.items():
         g.add_node(name, fn)
 
+    # Both paths run `condense` first: it resolves follow-up references ("what about
+    # that?") into a standalone question using prior turns, skipped on a conversation's
+    # first message. `rewrite`'s loop-back edges bypass it — condense is a turn-start
+    # operation, not something that should re-run on every corrective retry.
+    g.add_edge(START, "condense")
+
     if settings.agentic_retrieval:
         # --- Agentic path: LLM decides which tool to call (or to answer directly). ---
-        g.add_edge(START, "agent")
+        g.add_edge("condense", "agent")
         g.add_conditional_edges(
             "agent", route_after_agent, {"tools": "tools", "generate": "generate"}
         )
@@ -90,7 +98,7 @@ def build_rag_graph(
             return {"messages": [AIMessage(content="", tool_calls=[call])]}
 
         g.add_node("force_retrieve", force_retrieve)
-        g.add_edge(START, "force_retrieve")
+        g.add_edge("condense", "force_retrieve")
         g.add_edge("force_retrieve", "tools")
         # tools always produces retrieve_notes output → grade directly.
         g.add_edge("tools", "grade")

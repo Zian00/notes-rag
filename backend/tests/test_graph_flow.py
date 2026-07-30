@@ -126,7 +126,7 @@ async def test_happy_path(_engine: AsyncEngine) -> None:
                 content="",
                 tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "tc1"}],
             ),
-            Grade(relevant=True),
+            Grade(relevant=True, reason="context answers the question"),
             AIMessage("A heap is a tree-based structure [1]."),
         ]
     )
@@ -161,7 +161,7 @@ async def test_corrective_loop(_engine: AsyncEngine) -> None:
                 tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "tc1"}],
             ),
             # First grade: not relevant
-            Grade(relevant=False),
+            Grade(relevant=False, reason="context does not answer the question"),
             # Rewrite: returns a new query
             AIMessage("heap data structure definition"),
             # Second agent call: retrieve again with rewritten query
@@ -176,7 +176,7 @@ async def test_corrective_loop(_engine: AsyncEngine) -> None:
                 ],
             ),
             # Second grade: relevant
-            Grade(relevant=True),
+            Grade(relevant=True, reason="context answers the question"),
             # Generate: final answer
             AIMessage("A heap is a tree-based data structure [1]."),
         ]
@@ -215,7 +215,8 @@ async def test_retry_cap(_engine: AsyncEngine) -> None:
                 tool_calls=[{"name": "retrieve_notes", "args": {"query": f"q{i}"}, "id": f"tc{i}"}],
             )
         )
-        responses.append(Grade(relevant=False))  # always irrelevant
+        # always irrelevant
+        responses.append(Grade(relevant=False, reason="context does not answer the question"))
         if i < max_retries:
             responses.append(AIMessage(f"rewritten query {i}"))  # rewrite response
 
@@ -327,7 +328,7 @@ async def test_linear_fallback(_engine: AsyncEngine) -> None:
     # Linear path: force_retrieve → tools → grade → generate (no agent model involved in tool call).
     model = FakeChatModel(
         responses=[
-            Grade(relevant=True),  # grade node
+            Grade(relevant=True, reason="context answers the question"),  # grade node
             AIMessage("Heap is a tree-based structure."),  # generate node
         ]
     )
@@ -358,12 +359,15 @@ async def test_multi_turn(_engine: AsyncEngine) -> None:
 
     # Both turns use the SAME graph (same InMemorySaver instance).
     # All scripted responses queued up front for turn 1 and turn 2 in order.
+    # Turn 1 has no prior history, so condense is skipped (no LLM call for it).
+    # Turn 2 has prior history, so condense DOES call the model first.
     model = FakeChatModel(
         responses=[
-            # Turn 1: agent → no tool call → generate
+            # Turn 1: (condense skipped) → agent → no tool call → generate
             AIMessage("Hello, I'm here to help."),  # agent (direct answer, no tools)
             AIMessage("Hello, I'm here to help."),  # generate
-            # Turn 2: agent → no tool call → generate
+            # Turn 2: condense → agent → no tool call → generate
+            AIMessage("what did I say?"),  # condense (already standalone, unchanged)
             AIMessage("Yes, as I recall, you greeted me."),  # agent
             AIMessage("Yes, as I recall, you greeted me."),  # generate
         ]
@@ -394,3 +398,166 @@ async def test_multi_turn(_engine: AsyncEngine) -> None:
     contents = [m.content for m in human_msgs]
     assert "hi" in contents
     assert "what did I say?" in contents
+
+
+# ---------------------------------------------------------------------------
+# 8. Follow-up condensing — linear path (deterministic, no agent reasoning involved)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_condense_resolves_followup_linear_path(_engine: AsyncEngine) -> None:
+    """Linear path: force_retrieve reads state['question'] directly with no history
+    awareness of its own, so condense resolving the follow-up BEFORE force_retrieve
+    runs is the only thing that fixes this path's retrieval query."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user, _ = await _seed_user_and_doc(s)
+
+    thread_id = f"t-{uuid.uuid4().hex}"
+    checkpointer = InMemorySaver()
+    config = {"configurable": {"thread_id": thread_id, "user_id": user.id}}
+
+    # Turn 1: no prior history → condense skipped → force_retrieve → grade → generate.
+    model1 = FakeChatModel(
+        responses=[
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure."),
+        ]
+    )
+    graph1 = build_rag_graph(
+        chat_model=model1,
+        embeddings=FakeEmbeddingsProvider(DIM),
+        sessionmaker=maker,
+        settings=_settings(agentic_retrieval=False),
+        checkpointer=checkpointer,
+    )
+    await graph1.ainvoke(
+        {
+            "messages": [HumanMessage("what is a heap?")],
+            "question": "what is a heap?",
+            "retry_count": 0,
+        },
+        config,
+    )
+
+    # Turn 2: condense resolves "what about a min one?" using turn 1's history;
+    # force_retrieve must then use the CONDENSED question, not the raw follow-up.
+    model2 = FakeChatModel(
+        responses=[
+            AIMessage("what about a min-heap?"),  # condense
+            Grade(relevant=True, reason="context answers the question"),  # grade
+            AIMessage("A min-heap keeps the smallest element at the root."),  # generate
+        ]
+    )
+    graph2 = build_rag_graph(
+        chat_model=model2,
+        embeddings=FakeEmbeddingsProvider(DIM),
+        sessionmaker=maker,
+        settings=_settings(agentic_retrieval=False),
+        checkpointer=checkpointer,
+    )
+    state2 = await graph2.ainvoke(
+        {
+            "messages": [HumanMessage("what about a min one?")],
+            "question": "what about a min one?",
+            "retry_count": 0,
+        },
+        config,
+    )
+
+    assert state2["question"] == "what about a min-heap?"
+    # force_retrieve's synthesized tool call must carry the condensed query.
+    retrieve_calls = [
+        m
+        for m in state2["messages"]
+        if isinstance(m, AIMessage) and m.tool_calls and m.tool_calls[0]["name"] == "retrieve_notes"
+    ]
+    assert retrieve_calls[-1].tool_calls[0]["args"]["query"] == "what about a min-heap?"
+
+
+# ---------------------------------------------------------------------------
+# 9. Follow-up condensing — agentic path (condensed question reaches agent's
+#    tool-call reasoning via the ephemeral note, without polluting history)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_condense_output_reaches_agent_ephemerally(_engine: AsyncEngine) -> None:
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user, _ = await _seed_user_and_doc(s)
+
+    captured: list[list[Any]] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured.append(list(messages))
+            return await super()._agenerate(messages, **kw)
+
+    thread_id = f"t-{uuid.uuid4().hex}"
+    checkpointer = InMemorySaver()
+    config = {"configurable": {"thread_id": thread_id, "user_id": user.id}}
+
+    # Turn 1: plain FakeChatModel (not captured) — establishes prior history.
+    model1 = FakeChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "tc1"}],
+            ),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure [1]."),
+        ]
+    )
+    graph1 = build_rag_graph(
+        chat_model=model1,
+        embeddings=FakeEmbeddingsProvider(DIM),
+        sessionmaker=maker,
+        settings=_settings(),
+        checkpointer=checkpointer,
+    )
+    await graph1.ainvoke(
+        {
+            "messages": [HumanMessage("what is a heap?")],
+            "question": "what is a heap?",
+            "retry_count": 0,
+        },
+        config,
+    )
+
+    # Turn 2: CapturingFake records every message list passed to _agenerate.
+    model2 = CapturingFake(
+        responses=[
+            AIMessage("what about a min-heap?"),  # condense
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "retrieve_notes", "args": {"query": "min-heap"}, "id": "tc2"}
+                ],
+            ),  # agent
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A min-heap keeps the smallest element at the root [1]."),
+        ]
+    )
+    graph2 = build_rag_graph(
+        chat_model=model2,
+        embeddings=FakeEmbeddingsProvider(DIM),
+        sessionmaker=maker,
+        settings=_settings(),
+        checkpointer=checkpointer,  # same checkpointer as turn 1 = shared thread state
+    )
+    await graph2.ainvoke(
+        {
+            "messages": [HumanMessage("what about a min one?")],
+            "question": "what about a min one?",
+            "retry_count": 0,
+        },
+        config,
+    )
+
+    # captured[0] = condense's call, captured[1] = agent's call (grade bypasses
+    # _agenerate via with_structured_output's own runnable).
+    agent_call_msgs = captured[1]
+    full_text = " ".join(str(getattr(m, "content", "")) for m in agent_call_msgs)
+    assert "what about a min-heap?" in full_text
