@@ -149,7 +149,8 @@ async def delete_document(
         # and could FK-violate when it tries to insert chunks for a row that's gone.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Cannot delete document {document_id}: still {doc.status!r} — try again once it finishes.",
+            f"Cannot delete document {document_id}: still {doc.status!r} — "
+            "try again once it finishes.",
         )
     storage_path = doc.storage_path
     await repo.delete(doc)  # FK ON DELETE CASCADE removes the chunks too
