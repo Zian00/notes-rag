@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Trash2 } from "lucide-react"
+import { Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,10 @@ export function DocumentRow({ document }: DocumentRowProps) {
   const replaceDocument = useReplaceDocument()
 
   const displayName = document.title ?? document.filename
+  // Replace/Delete are rejected server-side (409) while a document is
+  // pending/processing — disabling them here avoids the round-trip and the
+  // confusing error toast that would otherwise follow.
+  const isBusy = document.status === "pending" || document.status === "processing"
 
   function handleReplaceFileSelected(file: File) {
     replaceDocument.mutate(
@@ -69,10 +73,13 @@ export function DocumentRow({ document }: DocumentRowProps) {
           <p
             className={
               document.status === "failed"
-                ? "mt-0.5 text-sm text-destructive"
-                : "mt-0.5 text-sm text-muted-foreground"
+                ? "mt-0.5 flex items-center gap-1.5 text-sm text-destructive"
+                : "mt-0.5 flex items-center gap-1.5 text-sm text-muted-foreground"
             }
           >
+            {document.status !== "failed" && (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            )}
             {document.status === "failed"
               ? `Failed: ${document.error_message ?? "Unknown error"}`
               : "Processing…"}
@@ -93,12 +100,18 @@ export function DocumentRow({ document }: DocumentRowProps) {
             the label natively activates the file input exactly once. A button-wraps-input
             pattern was tried earlier in this project and caused a double-file-dialog
             re-entrancy bug; this mirrors the fix already used by UploadDropzone. */}
-        <label className="cursor-pointer text-sm text-muted-foreground underline-offset-2 hover:underline has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/50">
+        <label
+          className={
+            isBusy || replaceDocument.isPending
+              ? "cursor-not-allowed text-sm text-muted-foreground/50"
+              : "cursor-pointer text-sm text-muted-foreground underline-offset-2 hover:underline has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/50"
+          }
+        >
           Replace
           <input
             type="file"
             className="sr-only"
-            disabled={replaceDocument.isPending}
+            disabled={isBusy || replaceDocument.isPending}
             onChange={(e) => {
               const file = e.target.files?.[0]
               if (file) handleReplaceFileSelected(file)
@@ -114,6 +127,7 @@ export function DocumentRow({ document }: DocumentRowProps) {
             variant="ghost"
             size="icon-sm"
             aria-label={`Delete ${displayName}`}
+            disabled={isBusy}
             onClick={() => setIsConfirmOpen(true)}
           >
             <Trash2 className="size-4 text-destructive" />

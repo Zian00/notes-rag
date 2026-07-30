@@ -54,6 +54,9 @@ def _enqueue_synchronously(client):
 
 @pytest.mark.asyncio
 async def test_upload_list_delete_flow(auth_client):
+    # Delete now rejects a still-pending/processing document (race guard) — process
+    # it synchronously first so it reaches 'ready', matching real-world sequencing.
+    _enqueue_synchronously(auth_client)
     files = {"file": ("notes.txt", b"alpha beta gamma. delta epsilon.", "text/plain")}
     resp = await auth_client.post(
         "/documents", files=files, data={"title": "My Notes", "course": "BIO"}
@@ -216,6 +219,18 @@ async def test_replace_not_owned_returns_404(auth_client, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_processing_document_returns_409(auth_client):
+    """A document is still 'pending' right after upload (the test client's
+    enqueue is a no-op — see conftest.py) — deleting it now would race the
+    background job's read of its file/row."""
+    files = {"file": ("a.txt", b"still processing content", "text/plain")}
+    doc_id = (await auth_client.post("/documents", files=files)).json()["id"]
+
+    resp = await auth_client.delete(f"/documents/{doc_id}")
+    assert resp.status_code == 409
 
 
 @pytest.mark.asyncio

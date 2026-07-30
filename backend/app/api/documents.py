@@ -143,6 +143,14 @@ async def delete_document(
     doc = await repo.get_for_user(document_id, current_user.id)
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    if doc.status not in ("ready", "failed"):
+        # Mirrors stage_replace's DocumentBusy guard (services/ingestion.py) — deleting
+        # mid-flight would race the background job's read of this document's file/row,
+        # and could FK-violate when it tries to insert chunks for a row that's gone.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot delete document {document_id}: still {doc.status!r} — try again once it finishes.",
+        )
     storage_path = doc.storage_path
     await repo.delete(doc)  # FK ON DELETE CASCADE removes the chunks too
     await session.commit()

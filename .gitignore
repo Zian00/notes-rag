@@ -35,3 +35,4 @@ env/
 .DS_Store
 .worktrees/
 bash.exe.stackdump
+firebase-debug.log

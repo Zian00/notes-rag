@@ -12,6 +12,7 @@ from app.api import auth, chat, conversations, documents, health, search
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import get_engine, get_sessionmaker
+
 # Importing via ingestion_tasks (not app.jobs.app) so the @app.task-decorated
 # process_document/process_document_replace register on this same App object —
 # deps.py's defer_async() calls need the tasks registered on the instance we open.
