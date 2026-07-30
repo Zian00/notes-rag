@@ -33,7 +33,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://notes:notes@postgres:5432/notes_rag
-      JWT_SECRET: dev-only-change-me
+      JWT_SECRET: dev-only-wT5dZWErzwdmrS20Wa2y5mFl2Jf3gLHZQQisdXB1mgw
       ENVIRONMENT: development
       CORS_ORIGINS: '["http://localhost:5173"]'
       UPLOAD_DIR: /data/uploads
@@ -66,7 +66,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://notes:notes@postgres:5432/notes_rag
-      JWT_SECRET: dev-only-change-me
+      JWT_SECRET: dev-only-wT5dZWErzwdmrS20Wa2y5mFl2Jf3gLHZQQisdXB1mgw
       ENVIRONMENT: development
       UPLOAD_DIR: /data/uploads
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
