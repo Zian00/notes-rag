@@ -267,13 +267,33 @@ def test_format_chunks_empty() -> None:
 
 def test_format_chunks_numbered() -> None:
     chunks = [
-        {"title": "Lecture 1", "filename": "l1.pdf", "content": "hello",
-         "page_number": 3, "section": None},
-        {"title": None, "filename": "l2.pdf", "content": "world",
-         "page_number": None, "section": None},
+        {"document_id": "doc-1", "title": "Lecture 1", "filename": "l1.pdf",
+         "content": "hello", "page_number": 3, "section": None},
+        {"document_id": "doc-2", "title": None, "filename": "l2.pdf",
+         "content": "world", "page_number": None, "section": None},
     ]
     rendered = format_chunks_for_llm(chunks)
     assert "[1] Lecture 1 (p.3)" in rendered
     assert "[2] l2.pdf" in rendered
     assert "hello" in rendered
     assert "world" in rendered
+
+
+def test_format_chunks_same_document_shares_number() -> None:
+    """Two chunks from the same document must share a citation number — numbering
+    is by document, not by chunk position, so an LLM-written "[n]" always matches
+    the client-facing (document-deduped) citations array."""
+    chunks = [
+        {"document_id": "doc-1", "title": "Lecture 1", "filename": "l1.pdf",
+         "content": "page one text", "page_number": 1, "section": None},
+        {"document_id": "doc-2", "title": "Lecture 2", "filename": "l2.pdf",
+         "content": "other doc text", "page_number": 1, "section": None},
+        {"document_id": "doc-1", "title": "Lecture 1", "filename": "l1.pdf",
+         "content": "page two text", "page_number": 2, "section": None},
+    ]
+    rendered = format_chunks_for_llm(chunks)
+    assert "[1] Lecture 1 (p.1)\npage one text" in rendered
+    assert "[2] Lecture 2 (p.1)\nother doc text" in rendered
+    # Second doc-1 chunk reuses [1], NOT [3].
+    assert "[1] Lecture 1 (p.2)\npage two text" in rendered
+    assert "[3]" not in rendered

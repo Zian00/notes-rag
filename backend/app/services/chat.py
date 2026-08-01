@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.repositories.conversation import ConversationRepository
+from app.services.citations import dedupe_chunks_by_document
 
 # Maximum characters used as the conversation title (derived from first question).
 _TITLE_MAX = 120
@@ -34,23 +35,16 @@ def _sse(event: str, data: Any) -> str:
 def _to_citations(context: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Trim context dicts to the citation-safe subset of keys for the client.
 
-    Deduped by document_id (first occurrence wins) so citations represent
-    source *documents*, not individual chunks.  Whole-document tool calls
-    produce one chunk per page; without this dedup the citations list would
-    balloon to dozens of near-identical entries for the same document.
+    Deduped by document_id via the shared dedupe_chunks_by_document rule, so this
+    array's ordering always agrees with the citation numbers
+    format_chunks_for_llm showed the LLM — an inline "[n]" marker in the answer
+    always corresponds to citations[n-1].
     """
-    seen: set[Any] = set()
-    result: list[dict[str, Any]] = []
-    for c in context:
-        doc_id = c.get("document_id")
-        if doc_id in seen:
-            continue
-        seen.add(doc_id)
-        result.append(
-            {k: c.get(k) for k in
-             ("chunk_id", "document_id", "filename", "title", "page_number", "section", "score")}
-        )
-    return result
+    return [
+        {k: c.get(k) for k in
+         ("chunk_id", "document_id", "filename", "title", "page_number", "section", "score")}
+        for c in dedupe_chunks_by_document(context)
+    ]
 
 
 class ChatService:

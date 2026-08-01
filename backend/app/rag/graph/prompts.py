@@ -11,7 +11,9 @@ AGENT_SYSTEM = (
 # System prompt for the generate node: strict anti-hallucination grounding.
 GENERATE_SYSTEM = (
     "Answer using ONLY the provided context from the student's notes. "
-    "Cite sources inline like [1], [2] matching the numbered context. "
+    "Cite sources inline using ONLY the bracket numbers that appear in the "
+    "Context section below — reuse the same number every time you reference "
+    "the same source, and never invent a number that isn't shown there. "
     "If the context does not contain the answer, say clearly: "
     '"I couldn\'t find this in your notes." Do not use outside knowledge.'
 )

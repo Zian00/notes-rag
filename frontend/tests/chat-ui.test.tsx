@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
@@ -65,7 +65,7 @@ const convo1Detail: ConversationDetail = {
 function mockAuthed() {
   server.use(
     http.post(`${API_BASE}/auth/refresh`, () =>
-      HttpResponse.json({ access_token: "t", token_type: "bearer" }),
+      HttpResponse.json({ access_token: "t", token_type: "bearer" })
     ),
     http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
     http.get(`${API_BASE}/conversations`, () => HttpResponse.json([])),
@@ -75,8 +75,8 @@ function mockAuthed() {
     // the just-streamed live messages are already non-empty by the time this
     // resolves, so there's nothing to seed anyway.
     http.get(`${API_BASE}/conversations/:conversationId`, () =>
-      HttpResponse.json({ detail: "Conversation not found" }, { status: 404 }),
-    ),
+      HttpResponse.json({ detail: "Conversation not found" }, { status: 404 })
+    )
   )
 }
 
@@ -97,7 +97,7 @@ function renderApp(initialEntries: string[]) {
           <Toaster />
         </AuthProvider>
       </ThemeProvider>
-    </Wrapper>,
+    </Wrapper>
   )
 }
 
@@ -108,7 +108,13 @@ afterEach(() => {
 describe("ChatPage", () => {
   it("sends a question, streams tokens into the assistant bubble, and shows citations on expand", async () => {
     mockAuthed()
-    const citation: Citation = { chunk_id: "c1", filename: "notes.pdf", title: "Notes", section: "Intro", score: 0.912 }
+    const citation: Citation = {
+      chunk_id: "c1",
+      filename: "notes.pdf",
+      title: "Notes",
+      section: "Intro",
+      score: 0.912,
+    }
     mockStreamChat.mockImplementation(
       scriptedStream([
         { event: "meta", data: { conversation_id: "convo-new" } },
@@ -116,7 +122,7 @@ describe("ChatPage", () => {
         { event: "token", data: { delta: "lo" } },
         { event: "citations", data: [citation] },
         { event: "done", data: {} },
-      ]),
+      ])
     )
 
     const user = userEvent.setup()
@@ -139,7 +145,7 @@ describe("ChatPage", () => {
   it("loads and seeds history when opening an existing conversation", async () => {
     mockAuthed()
     server.use(
-      http.get(`${API_BASE}/conversations/${convo1.id}`, () => HttpResponse.json(convo1Detail)),
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () => HttpResponse.json(convo1Detail))
     )
 
     renderApp([`/chat/${convo1.id}`])
@@ -155,7 +161,7 @@ describe("ChatPage", () => {
         { event: "meta", data: { conversation_id: "convo-new" } },
         { event: "token", data: { delta: "answer" } },
         { event: "done", data: {} },
-      ]),
+      ])
     )
 
     const user = userEvent.setup()
@@ -181,7 +187,7 @@ describe("ChatPage", () => {
         { event: "meta", data: { conversation_id: "convo-new" } },
         { event: "token", data: { delta: "ok" } },
         { event: "done", data: {} },
-      ]),
+      ])
     )
 
     const user = userEvent.setup()
@@ -203,7 +209,7 @@ describe("ChatPage", () => {
     // whitespace-pre-wrap) — matched here directly on the <p> so the search
     // isn't also satisfied by ancestor elements sharing the same textContent.
     const userBubble = screen.getByText(
-      (_, element) => element?.tagName === "P" && element.textContent === "line one\nline two",
+      (_, element) => element?.tagName === "P" && element.textContent === "line one\nline two"
     )
     expect(userBubble).toBeInTheDocument()
   })
@@ -250,9 +256,7 @@ describe("ChatPage", () => {
   it("new chat while already at bare /chat clears a lingering thread", async () => {
     mockAuthed()
     mockStreamChat.mockImplementation(
-      scriptedStream([
-        { event: "error", data: { detail: "boom" } },
-      ]),
+      scriptedStream([{ event: "error", data: { detail: "boom" } }])
     )
 
     const user = userEvent.setup()
@@ -271,6 +275,231 @@ describe("ChatPage", () => {
 
     expect(screen.queryByText("question that errors")).not.toBeInTheDocument()
     expect(await screen.findByText(/ask something about your notes/i)).toBeInTheDocument()
+  })
+})
+
+describe("Markdown rendering", () => {
+  it("renders assistant markdown as real elements, not literal syntax", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        {
+          event: "token",
+          data: { delta: "**bold**\n\n- one\n- two\n\n| a | b |\n|---|---|\n| 1 | 2 |" },
+        },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "format please")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // The typewriter reveal drains progressively, so wait for the LAST piece of
+    // content to appear (proves the full string has revealed) before asserting
+    // on earlier pieces synchronously — revealing is monotonic/append-only.
+    expect(await screen.findByRole("table")).toBeInTheDocument()
+    expect(screen.getByText("bold").tagName).toBe("STRONG")
+    expect(screen.getByText("one").tagName).toBe("LI")
+  })
+
+  it("never markdown-renders the user's own message", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "ok" } },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "**not bold** literally")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    const userBubble = await screen.findByText("**not bold** literally")
+    expect(userBubble.tagName).toBe("P")
+  })
+
+  it("never markdown-renders an error message", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "error", data: { detail: "**request failed**: see logs" } },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "what is a heap?")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    const errorBubble = await screen.findByText("**request failed**: see logs")
+    expect(errorBubble.tagName).toBe("P")
+  })
+
+  it("never auto-renders assistant markdown images", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "![a diagram](https://example.com/x.png)" } },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "show me")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    await screen.findByText(/a diagram/i)
+    expect(screen.queryByRole("img")).not.toBeInTheDocument()
+  })
+
+  it("assistant links open safely in a new tab", async () => {
+    mockAuthed()
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "[my notes](https://example.com/notes)" } },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "link please")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // Default 1000ms timeout is too tight here: the typewriter reveal drains
+    // this delta a few characters per tick, and a full app re-render (sidebar,
+    // markdown re-parse) per tick costs more than the tick interval itself in
+    // this test environment — give it real margin rather than risk flakiness.
+    const link = await screen.findByRole("link", { name: /my notes/i }, { timeout: 3000 })
+    expect(link).toHaveAttribute("target", "_blank")
+    expect(link).toHaveAttribute("rel", "noopener noreferrer")
+  })
+
+  it("places the streaming cursor after the true last text node, even inside a list", async () => {
+    mockAuthed()
+    // Never resolves on its own — mid-stream cursor placement only matters
+    // while streaming is still in progress, same pattern as the Enter-blocking test.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockStreamChat.mockImplementation(async function* (): AsyncGenerator<ChatFrame> {
+      yield { event: "meta", data: { conversation_id: "convo-new" } }
+      yield { event: "token", data: { delta: "- first\n- second" } }
+      await gate
+      yield { event: "done", data: {} }
+    })
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "a list please")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // The cursor must land inside the last <li>, right after its text — not
+    // trailing the whole message in its own block.
+    await waitFor(() => {
+      const secondItem = screen.getByText("second")
+      expect(secondItem.tagName).toBe("LI")
+      expect(secondItem.querySelector('[aria-hidden="true"]')).toBeInTheDocument()
+    })
+
+    release()
+    await waitFor(() => {
+      const secondItem = screen.getByText("second")
+      expect(secondItem.querySelector('[aria-hidden="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it("clicking a citation marker expands and highlights the matching source", async () => {
+    mockAuthed()
+    const citation: Citation = { chunk_id: "c1", filename: "notes.pdf", title: "Notes" }
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "A heap is a tree [1]." } },
+        { event: "citations", data: [citation] },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "what is a heap?")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    const marker = await screen.findByRole("button", { name: "[1]" })
+    expect(screen.getByRole("button", { name: /sources/i })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    )
+
+    // fireEvent (not userEvent) deliberately: userEvent's pointer-events hit-test
+    // heuristic checks document.elementFromPoint() at the target's computed
+    // bounding rect, which jsdom (no real layout engine) returns as zero-sized
+    // for a small inline element this deeply nested in ReactMarkdown's output —
+    // causing userEvent to silently skip the click even though the handler is
+    // wired correctly (fireEvent, a raw DOM dispatch bypassing that heuristic,
+    // confirms the click handler itself works). Still worth checking in a real
+    // browser before considering this feature done.
+    fireEvent.click(marker)
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /sources/i })).toHaveAttribute(
+        "aria-expanded",
+        "true"
+      )
+    )
+    expect(await screen.findByText("Notes")).toBeInTheDocument()
+  })
+
+  it("leaves an out-of-range citation marker as plain, unclickable text", async () => {
+    mockAuthed()
+    const citation: Citation = { chunk_id: "c1", filename: "notes.pdf", title: "Notes" }
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        // Only 1 citation is sent, but the model (miscounting) wrote [2].
+        { event: "token", data: { delta: "A heap is a tree [2]." } },
+        { event: "citations", data: [citation] },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "what is a heap?")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText("A heap is a tree [2].")).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "[2]" })).not.toBeInTheDocument()
+    })
   })
 })
 
@@ -302,7 +531,7 @@ describe("ChatInput top_k clamp", () => {
       scriptedStream([
         { event: "meta", data: { conversation_id: "convo-new" } },
         { event: "done", data: {} },
-      ]),
+      ])
     )
 
     const user = userEvent.setup()
@@ -351,7 +580,10 @@ describe("Sidebar conversation list", () => {
     mockAuthed()
     server.use(
       http.get(`${API_BASE}/conversations`, () => HttpResponse.json([convo1])),
-      http.delete(`${API_BASE}/conversations/${convo1.id}`, () => new HttpResponse(null, { status: 204 })),
+      http.delete(
+        `${API_BASE}/conversations/${convo1.id}`,
+        () => new HttpResponse(null, { status: 204 })
+      )
     )
 
     const user = userEvent.setup()

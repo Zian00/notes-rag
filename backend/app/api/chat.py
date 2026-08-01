@@ -41,4 +41,15 @@ async def chat(
         tags=body.tags,
         top_k=body.top_k,
     )
-    return StreamingResponse(stream, media_type="text/event-stream")
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            # Without these, an intermediary (the browser, Vite's dev proxy) can
+            # buffer the whole response instead of flushing each SSE frame as
+            # it's produced, making token-by-token streaming appear all-at-once.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

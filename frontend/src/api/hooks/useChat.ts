@@ -49,6 +49,14 @@ function generateMessageId(): string {
   return crypto.randomUUID()
 }
 
+// Tunable "typewriter" reveal pace: deltas now arrive over the network as fast
+// as the model + backend can send them (real per-token streaming), which is
+// often faster than a comfortable reading pace. These control how fast
+// buffered-but-not-yet-shown text visually appears, independent of actual
+// network/token arrival timing — see enqueueAssistantContent below.
+const REVEAL_INTERVAL_MS = 15
+const REVEAL_CHARS_PER_TICK = 3
+
 // Drives the live (in-progress) chat session: the growing message list plus the
 // streaming state machine on top of Task 10's streamChat SSE generator.
 //
@@ -134,7 +142,11 @@ export function useChat(options?: UseChatOptions): UseChatResult {
 
       const userMessage: ChatMessage = { id: generateMessageId(), role: "user", content: trimmed }
       const assistantMessageId = generateMessageId()
-      const assistantPlaceholder: ChatMessage = { id: assistantMessageId, role: "assistant", content: "" }
+      const assistantPlaceholder: ChatMessage = {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+      }
 
       setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
       setIsStreaming(true)
@@ -147,16 +159,54 @@ export function useChat(options?: UseChatOptions): UseChatResult {
       // but the map-by-id pattern is correct regardless of batching).
       const patchAssistantMessage = (patch: Partial<ChatMessage>) => {
         setMessages((prev) =>
-          prev.map((message) => (message.id === assistantMessageId ? { ...message, ...patch } : message)),
-        )
-      }
-      const appendAssistantContent = (delta: string) => {
-        setMessages((prev) =>
           prev.map((message) =>
-            message.id === assistantMessageId ? { ...message, content: message.content + delta } : message,
-          ),
+            message.id === assistantMessageId ? { ...message, ...patch } : message
+          )
         )
       }
+      // `pending` buffers text that's arrived over the network but hasn't been
+      // visually revealed yet; a fixed-rate interval drains it a few characters
+      // at a time. `onDrained` lets the `finally` block below await full drain
+      // (so isStreaming — and the streaming cursor — stays true until the
+      // typewriter visually catches up, not just until the network finishes).
+      let pending = ""
+      let revealTimer: ReturnType<typeof setInterval> | null = null
+      let onDrained: (() => void) | null = null
+      const revealTick = () => {
+        if (pending.length > 0) {
+          const chunk = pending.slice(0, REVEAL_CHARS_PER_TICK)
+          pending = pending.slice(REVEAL_CHARS_PER_TICK)
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, content: message.content + chunk }
+                : message
+            )
+          )
+        }
+        if (pending.length === 0) {
+          if (revealTimer !== null) {
+            clearInterval(revealTimer)
+            revealTimer = null
+          }
+          onDrained?.()
+          onDrained = null
+        }
+      }
+      const enqueueAssistantContent = (delta: string) => {
+        pending += delta
+        if (revealTimer === null) {
+          revealTimer = setInterval(revealTick, REVEAL_INTERVAL_MS)
+        }
+      }
+      const waitForRevealToDrain = () =>
+        new Promise<void>((resolve) => {
+          if (pending.length === 0 && revealTimer === null) {
+            resolve()
+            return
+          }
+          onDrained = resolve
+        })
 
       try {
         const frames = streamChat(
@@ -167,7 +217,7 @@ export function useChat(options?: UseChatOptions): UseChatResult {
             tags: filters?.tags,
             top_k: filters?.topK,
           },
-          controller.signal,
+          controller.signal
         )
 
         for await (const frame of frames) {
@@ -180,10 +230,14 @@ export function useChat(options?: UseChatOptions): UseChatResult {
               onConversationCreated?.(frame.data.conversation_id)
             }
           } else if (frame.event === "token") {
-            appendAssistantContent(frame.data.delta)
+            enqueueAssistantContent(frame.data.delta)
           } else if (frame.event === "citations") {
             patchAssistantMessage({ citations: frame.data })
           } else if (frame.event === "error") {
+            // Discard any not-yet-revealed partial answer text — content is
+            // about to be replaced wholesale with the error message, so there's
+            // nothing left worth typewriter-draining.
+            pending = ""
             patchAssistantMessage({ error: true, content: frame.data.detail })
             break
           } else if (frame.event === "done") {
@@ -194,11 +248,18 @@ export function useChat(options?: UseChatOptions): UseChatResult {
         // An aborted stream (stop() or unmount) is a user/lifecycle action, not a
         // failure — the assistant message should stay as-is (whatever content
         // streamed in before cancellation) rather than being marked errored.
-        const aborted = controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")
+        const aborted =
+          controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")
         if (!aborted) {
+          pending = "" // about to replace content wholesale — see the SSE error branch above
           patchAssistantMessage({ error: true, content: "Something went wrong. Please try again." })
         }
       } finally {
+        // Let the typewriter finish revealing whatever's still buffered before
+        // clearing isStreaming — the assistant should still look like it's
+        // "responding" until the visible text has actually caught up, even
+        // though the network stream itself already finished.
+        await waitForRevealToDrain()
         setIsStreaming(false)
         abortControllerRef.current = null
         // A new chat now exists, or an existing one just moved to the top of the
@@ -206,7 +267,7 @@ export function useChat(options?: UseChatOptions): UseChatResult {
         void queryClient.invalidateQueries({ queryKey: conversationsListKey })
       }
     },
-    [isStreaming, onConversationCreated, queryClient, conversationsListKey],
+    [isStreaming, onConversationCreated, queryClient, conversationsListKey]
   )
 
   return { messages, isStreaming, send, stop, reset, seed }

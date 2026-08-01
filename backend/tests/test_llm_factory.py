@@ -22,6 +22,23 @@ def test_google_provider(monkeypatch):
     assert captured["temperature"] == 0.2
 
 
+def test_openai_provider(monkeypatch):
+    captured = {}
+
+    class FakeChat:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr("app.rag.llm.ChatOpenAI", FakeChat)
+    model = build_chat_model(
+        _settings(llm_provider="openai", openai_api_key="k", llm_model="gpt-4o-mini")
+    )
+    assert isinstance(model, FakeChat)
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["temperature"] == 0.2
+    assert captured["api_key"] == "k"
+
+
 def test_unknown_provider_raises():
     with pytest.raises(ValueError):
         build_chat_model(_settings(llm_provider="mystery"))  # type: ignore[arg-type]

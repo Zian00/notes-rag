@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.rag.embeddings import EmbeddingsProvider
+from app.services.citations import dedupe_chunks_by_document
 from app.services.retrieval import RetrievalService
 
 # Type alias for clarity in function signatures.
@@ -139,13 +140,21 @@ def format_chunks_for_llm(chunks: list[dict[str, Any]]) -> str:
     """Render retrieved chunks as a numbered, cite-able context block for the model.
 
     The numbers ([1], [2], …) match what the generate-node's prompt asks the model
-    to use as inline citation markers.
+    to use as inline citation markers. Numbered by DOCUMENT, not by chunk position —
+    two chunks from the same document share a number — via the same
+    dedupe_chunks_by_document rule ChatService._to_citations uses for the
+    client-facing citations array, so an LLM-written "[n]" always corresponds to
+    citations[n-1].
     """
     if not chunks:
         return "NO RESULTS."
+    doc_numbers = {
+        c.get("document_id"): i for i, c in enumerate(dedupe_chunks_by_document(chunks), 1)
+    }
     lines = []
-    for i, c in enumerate(chunks, 1):
+    for c in chunks:
+        n = doc_numbers[c.get("document_id")]
         loc = f" (p.{c['page_number']})" if c.get("page_number") else ""
         title = c.get("title") or c.get("filename") or "note"
-        lines.append(f"[{i}] {title}{loc}\n{c['content']}")
+        lines.append(f"[{n}] {title}{loc}\n{c['content']}")
     return "\n\n".join(lines)

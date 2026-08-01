@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     retrieval_candidate_k: int = 20
 
     # --- Phase 3: agentic RAG / LLM ---
-    llm_provider: Literal["google", "anthropic", "openai_compatible"] = "google"
+    llm_provider: Literal["google", "anthropic", "openai", "openai_compatible"] = "google"
     # llm_model already declared above (default "gemini-2.5-flash")
     llm_temperature: float = 0.2  # low → grounded, less drift
     llm_base_url: str | None = None  # for openai_compatible (local Ollama/vLLM)

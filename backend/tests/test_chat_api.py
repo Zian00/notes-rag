@@ -120,6 +120,12 @@ async def test_chat_happy_path(
 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
+    # Anti-buffering headers: without these, some intermediary (the browser,
+    # Vite's dev proxy) can buffer the whole response instead of flushing each
+    # SSE frame as it's produced, making streaming appear to arrive all at once.
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-accel-buffering"] == "no"
+    assert resp.headers["connection"] == "keep-alive"
 
     frames = _parse_sse_frames(resp.text)
     event_names = [e for e, _ in frames]
