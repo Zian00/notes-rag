@@ -16,7 +16,11 @@ Edit the right-hand column to match whatever vocabulary you actually use.
 
 ## Label availability
 
-`wontfix` already exists (part of GitHub's default label set). The other four do not:
+All five exist in `Zian00/notes-rag` and were verified with `gh label list`. `wontfix`
+came from GitHub's default set; the other four were created for these skills.
+
+`gh` rejects an unknown label rather than creating it, so if a label is ever renamed or
+deleted, recreate it before the next `/triage`:
 
 ```sh
 gh label create needs-triage    --description "Maintainer needs to evaluate this issue"
@@ -24,5 +28,3 @@ gh label create needs-info      --description "Waiting on reporter for more info
 gh label create ready-for-agent --description "Fully specified, ready for an AFK agent"
 gh label create ready-for-human --description "Requires human implementation"
 ```
-
-`gh` rejects an unknown label rather than creating it, so run these before the first `/triage`.
