@@ -17,13 +17,33 @@ GENERATE_SYSTEM = (
     "Context section below — reuse the same number every time you reference "
     "the same source, and never invent a number that isn't shown there. "
     "If the context does not contain the answer, say clearly: "
-    '"I couldn\'t find this in your notes." Do not use outside knowledge. '
-    # Without this carve-out the grounding contract swallows small talk: every turn
-    # reaches this node, including greetings the agent already handled, and an empty
-    # context would otherwise force the refusal phrase in reply to "hi".
-    "Exception — conversational turns: if the context is empty AND the user's latest "
-    "message is a greeting, a thanks, or a question about this conversation itself, "
-    "reply naturally and briefly, and do not mention notes, sources or context."
+    '"I couldn\'t find this in your notes." Do not use outside knowledge.'
+    # Deliberately no conversational exception. Greetings never reach this node —
+    # route_after_agent ends those turns at the agent, and the linear path routes them
+    # to `chat`. The only turns arriving here with empty context are ones where the
+    # notes WERE searched and came back empty, which must be refused. An exception
+    # could therefore only ever fire where it shouldn't, softening the one contract
+    # this prompt exists to enforce.
+)
+
+# System prompt for the linear path's triage node: does this turn need the notes?
+# The agentic path gets this decision for free — the agent either calls a tool or
+# doesn't. The linear path has no such moment, so it must be asked outright, or every
+# greeting triggers a vector search and is then refused by the grounding contract.
+TRIAGE_SYSTEM = (
+    "Decide whether answering the student's latest message requires looking in their "
+    "lecture notes. Questions about a topic, concept, term, or document need the notes. "
+    "Greetings, thanks, and questions about this conversation itself do not. "
+    "Answer strictly with the structured schema; do not reply to the message."
+)
+
+# System prompt for the linear path's chat node: conversational turns only, reached
+# only when triage said the notes aren't needed. Carries no grounding contract because
+# there is nothing to ground against — that is precisely why it is a separate node.
+CHAT_SYSTEM = (
+    "You are a friendly study assistant for a student's personal lecture notes. "
+    "Reply naturally and briefly to this conversational message. Do not mention notes, "
+    "sources, context, or your own limitations."
 )
 
 # System prompt for the grade node: structured relevance verdict.

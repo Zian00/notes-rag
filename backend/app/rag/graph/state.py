@@ -1,6 +1,6 @@
 from typing import Annotated, Any, TypedDict
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, HumanMessage
 from langgraph.graph.message import add_messages
 
 # additional_kwargs marker set by the `generate` node on the one AIMessage that is
@@ -31,7 +31,12 @@ class RagState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     question: str  # current (possibly rewritten) query
     context: list[dict[str, Any]]  # chunks from the latest retrieve/get-document call
-    relevant: bool  # grade verdict: is context relevant to the question?
+    # True when the grader judged the chunks CURRENTLY in `context` unable to answer
+    # the question. Scoped to those chunks, not to the turn: any tool that replaces
+    # `context` clears this, because the verdict described the chunks it was shown.
+    # A turn-scoped verdict would outlive its subject — a rejected search followed by
+    # a document fetch would discard the perfectly good document.
+    context_rejected: bool
     # True once retrieve_notes has run in THIS turn. Distinguishes "the notes were
     # searched and came back empty" (must refuse — the anti-hallucination contract)
     # from "no search was ever needed" (a greeting, or listing what documents exist),
@@ -42,3 +47,30 @@ class RagState(TypedDict, total=False):
     # per-node reason field. Grader's explanation for the verdict; consumed by rewrite.
     grade_reason: str
     retry_count: int  # number of rewrites so far (capped at max_grade_retries)
+    # Linear path only: triage's verdict on whether this turn needs the notes at all.
+    # The agentic path has no use for it — its agent makes the same call by choosing
+    # whether to invoke a tool.
+    needs_notes: bool
+
+
+def new_turn_inputs(question: str) -> dict[str, Any]:
+    """Graph input for one turn: the new message plus a clean slate for the rest.
+
+    Lives beside the field declarations, not in the calling service, so that adding a
+    derived field to RagState and forgetting to reset it is a one-file mistake rather
+    than a silent one. That exact omission is what let a greeting inherit the previous
+    turn's chunks and be answered with "I couldn't find this in your notes."
+
+    Only `messages` survives across turns — the checkpointer accumulates it via the
+    add_messages reducer. Everything else describes one turn's retrieval attempt and
+    must not leak into the next.
+    """
+    return {
+        "messages": [HumanMessage(question)],
+        "question": question,
+        "context": [],
+        "context_rejected": False,
+        "searched": False,
+        "grade_reason": "",
+        "retry_count": 0,
+    }

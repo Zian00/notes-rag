@@ -15,11 +15,11 @@ from app.db.repositories.user import UserRepository
 from app.rag.graph.nodes import (
     CondensedQuestion,
     Grade,
-    _message_text,
     make_nodes,
     make_route_after_grade,
     route_after_agent,
     route_after_tools,
+    route_after_triage,
 )
 from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY
 from app.rag.graph.tools import build_tools
@@ -217,7 +217,7 @@ async def test_condense_is_not_handed_a_conversation_to_continue(
 
     # Exactly two messages: the system prompt and one user message holding everything.
     assert len(captured) == 2, [type(m).__name__ for m in captured]
-    payload = _message_text(captured[1])
+    payload = str(captured[1].content)
     assert "User: what is a heap?" in payload
     assert "Assistant: A heap is a tree-based structure." in payload
     assert "Latest message: what about a min one?" in payload
@@ -405,7 +405,7 @@ async def test_grade_sets_relevant_true(_engine: AsyncEngine) -> None:
         "retry_count": 0,
     }
     result = await nodes["grade"](state, _CONFIG)
-    assert result["relevant"] is True
+    assert result["context_rejected"] is False
 
 
 @pytest.mark.asyncio
@@ -429,7 +429,7 @@ async def test_grade_sets_relevant_false(_engine: AsyncEngine) -> None:
         "retry_count": 0,
     }
     result = await nodes["grade"](state, _CONFIG)
-    assert result["relevant"] is False
+    assert result["context_rejected"] is True
 
 
 @pytest.mark.asyncio
@@ -659,6 +659,138 @@ async def test_generate_with_empty_context_prompted_with_no_results(_engine: Asy
 
 
 @pytest.mark.asyncio
+async def test_generate_drops_context_the_grader_rejected(_engine: AsyncEngine) -> None:
+    """Chunks the grader rejected must not reach generate, nor become citations.
+
+    Observed live: "explain cache" retrieved ER-diagram chunks scoring 0.25, the
+    grader rejected them three times across two rewrites, and generate was then
+    handed them anyway. It refused — but by its own judgment, with nothing stopping
+    it stitching an answer out of near-misses — and the rejected chunks were attached
+    to that refusal, showing "Sources 4" beside "I couldn't find this in your notes".
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("I couldn't find this in your notes.")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("explain cache")],
+        "question": "explain cache",
+        "context": [{"chunk_id": "c1", "content": "ER diagrams model entities", "score": 0.25}],
+        "searched": True,   # retrieve_notes ran
+        "context_rejected": True,  # ...and the grader rejected what it returned
+        "retry_count": 2,   # rewrites exhausted, so this reaches generate
+    }
+    result = await nodes["generate"](state, _CONFIG)
+
+    prompt = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
+    assert "NO RESULTS" in prompt, "rejected chunks must not be offered as grounding"
+    assert "ER diagrams model entities" not in prompt
+    assert result["messages"][-1].additional_kwargs[CITATIONS_KEY] == []
+    # Written back so the SSE citations frame, which reads final state, agrees.
+    assert result["context"] == []
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_context_the_grader_approved(_engine: AsyncEngine) -> None:
+    """A passing grade means the chunks are the answer's grounding — keep them."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[AIMessage("A heap is a tree [1].")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("what is a heap?")],
+        "question": "what is a heap?",
+        "context": [{"chunk_id": "c1", "document_id": "d1", "content": "heap is a tree"}],
+        "searched": True,
+        "context_rejected": False,
+        "retry_count": 0,
+    }
+    result = await nodes["generate"](state, _CONFIG)
+
+    assert result["messages"][-1].additional_kwargs[CITATIONS_KEY] != []
+
+
+@pytest.mark.asyncio
+async def test_tools_clears_a_rejection_when_it_replaces_the_context(
+    _engine: AsyncEngine,
+) -> None:
+    """A grade verdict must not outlive the chunks it described.
+
+    Caught in code review. A turn can hold several tool calls: search rejected ->
+    rewrite -> fetch a document. Judging by "was anything searched this turn" would
+    discard that document, whose chunks no grader ever saw, and refuse a valid fetch.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user, doc = await _seed(s)
+
+    doc_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "get_document_content",
+            "args": {"document_id": str(doc.id)},
+            "id": "tc1",
+        }],
+    )
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(FakeChatModel(responses=[]), tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("summarise it"), doc_call],
+        "question": "summarise it",
+        # Left over from an earlier retrieve_notes in THIS turn that the grader rejected.
+        "context": [{"chunk_id": "old", "content": "unrelated chunk"}],
+        "context_rejected": True,
+        "searched": True,
+        "retry_count": 1,
+    }
+    config = {"configurable": {"user_id": user.id}}
+    result = await nodes["tools"](state, config)
+
+    assert result["context"], "the document's chunks must become the new context"
+    assert result["context_rejected"] is False, (
+        "the rejection described the old chunks, not these"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_ungraded_context_from_a_document_fetch(
+    _engine: AsyncEngine,
+) -> None:
+    """A document fetch is never graded, so `relevant` stays False — but its context
+    is valid and must survive. This is why the rule tests `searched`, not `relevant`
+    alone: `relevant` is reset per turn and so cannot distinguish "the grader said no"
+    from "the grader never ran"."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[AIMessage("The document covers BCNF [1].")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("summarise Topic3")],
+        "question": "summarise Topic3",
+        "context": [{"chunk_id": "c1", "document_id": "d1", "content": "BCNF requires..."}],
+        "searched": False,  # get_document_content is not a search
+        "context_rejected": False,  # never graded — the per-turn default
+        "retry_count": 0,
+    }
+    result = await nodes["generate"](state, _CONFIG)
+
+    assert result["messages"][-1].additional_kwargs[CITATIONS_KEY] != []
+    assert result["context"] != []
+
+
+@pytest.mark.asyncio
 async def test_recent_drops_earlier_agent_direct_answers(_engine: AsyncEngine) -> None:
     """An agent direct answer from an EARLIER turn must not be replayed as history.
 
@@ -842,6 +974,29 @@ def test_route_after_agent_ends_turn_after_listing_documents() -> None:
     assert route_after_agent(state) == "end"  # type: ignore[arg-type]
 
 
+def test_route_after_triage_retrieves_when_notes_are_needed() -> None:
+    """A subject question takes the normal retrieval path — triage changes nothing."""
+    state: dict[str, Any] = {"needs_notes": True}
+    assert route_after_triage(state) == "retrieve"  # type: ignore[arg-type]
+
+
+def test_route_after_triage_chats_when_notes_are_not_needed() -> None:
+    """A greeting skips retrieval entirely. Without this the linear path searched the
+    notes for "hi", found nothing relevant, and refused a greeting."""
+    state: dict[str, Any] = {"needs_notes": False}
+    assert route_after_triage(state) == "chat"  # type: ignore[arg-type]
+
+
+def test_route_after_triage_retrieves_when_the_verdict_is_missing() -> None:
+    """No verdict must fail toward retrieval, not toward chat.
+
+    The two failure modes are not equal. An unnecessary search costs a little latency;
+    chatting about a question that needed the notes answers it from the model's own
+    knowledge with no grounding — the exact thing the whole graph exists to prevent.
+    """
+    assert route_after_triage({}) == "retrieve"  # type: ignore[arg-type]
+
+
 def test_route_after_tools_grade_for_retrieve() -> None:
     tm = ToolMessage(content="...", tool_call_id="tc1", name="retrieve_notes")
     state: dict[str, Any] = {"messages": [tm]}
@@ -863,17 +1018,17 @@ def test_route_after_tools_agent_for_get_document_content() -> None:
 
 def test_route_after_grade_relevant() -> None:
     router = make_route_after_grade(max_retries=2)
-    state: dict[str, Any] = {"messages": [], "relevant": True, "retry_count": 0}
+    state: dict[str, Any] = {"messages": [], "context_rejected": False, "retry_count": 0}
     assert router(state) == "generate"  # type: ignore[arg-type]
 
 
 def test_route_after_grade_rewrite_when_retries_left() -> None:
     router = make_route_after_grade(max_retries=2)
-    state: dict[str, Any] = {"messages": [], "relevant": False, "retry_count": 0}
+    state: dict[str, Any] = {"messages": [], "context_rejected": True, "retry_count": 0}
     assert router(state) == "rewrite"  # type: ignore[arg-type]
 
 
 def test_route_after_grade_generate_when_retries_exhausted() -> None:
     router = make_route_after_grade(max_retries=2)
-    state: dict[str, Any] = {"messages": [], "relevant": False, "retry_count": 2}
+    state: dict[str, Any] = {"messages": [], "context_rejected": True, "retry_count": 2}
     assert router(state) == "generate"  # type: ignore[arg-type]

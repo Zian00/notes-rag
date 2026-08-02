@@ -23,8 +23,9 @@ from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.rag.graph import build_rag_graph
-from app.rag.graph.nodes import CondensedQuestion, Grade
-from langchain_core.messages import AIMessage, HumanMessage
+from app.rag.graph.nodes import CondensedQuestion, Grade, Triage
+from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -325,9 +326,11 @@ async def test_linear_fallback(_engine: AsyncEngine) -> None:
     async with maker() as s:
         user, _ = await _seed_user_and_doc(s)
 
-    # Linear path: force_retrieve → tools → grade → generate (no agent model involved in tool call).
+    # Linear path: triage → force_retrieve → tools → grade → generate (no agent model
+    # involved in the tool call).
     model = FakeChatModel(
         responses=[
+            Triage(needs_notes=True),  # triage node — this question needs the notes
             Grade(relevant=True, reason="context answers the question"),  # grade node
             AIMessage("Heap is a tree-based structure."),  # generate node
         ]
@@ -400,6 +403,42 @@ async def test_multi_turn(_engine: AsyncEngine) -> None:
     assert "what did I say?" in contents
 
 
+@pytest.mark.asyncio
+async def test_linear_fallback_greeting_skips_retrieval(_engine: AsyncEngine) -> None:
+    """A greeting on the linear path must not run a vector search.
+
+    Caught in code review. The linear path has no agent, so before triage existed every
+    message went straight to force_retrieve — a greeting ran a search, the grader
+    rejected the results, and generate answered "hi" with "I couldn't find this in your
+    notes." Only two responses are scripted: if retrieval still ran, grade and generate
+    would need two more and this would raise IndexError.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user, _ = await _seed_user_and_doc(s)
+
+    model = FakeChatModel(
+        responses=[
+            Triage(needs_notes=False),  # a greeting needs no notes
+            AIMessage("Hello! How can I help with your notes?"),  # chat node
+        ]
+    )
+
+    graph = _build_graph(model, maker, agentic_retrieval=False)
+    state = await _run(graph, user.id, "hi", f"t-{uuid.uuid4().hex}")
+
+    # No tool ran, so nothing was retrieved.
+    assert not state.get("context")
+    assert not any(isinstance(m, ToolMessage) for m in state["messages"])
+
+    answer = state["messages"][-1]
+    assert "Hello!" in answer.content
+    assert "couldn't find this in your notes" not in answer.content
+    # Marked like any real answer, so get_detail replays it and the SSE layer emits it.
+    assert answer.additional_kwargs.get(FINAL_ANSWER_KEY) is True
+    assert answer.additional_kwargs.get(CITATIONS_KEY) == []
+
+
 # ---------------------------------------------------------------------------
 # 8. Follow-up condensing — linear path (deterministic, no agent reasoning involved)
 # ---------------------------------------------------------------------------
@@ -418,9 +457,10 @@ async def test_condense_resolves_followup_linear_path(_engine: AsyncEngine) -> N
     checkpointer = InMemorySaver()
     config = {"configurable": {"thread_id": thread_id, "user_id": user.id}}
 
-    # Turn 1: no prior history → condense skipped → force_retrieve → grade → generate.
+    # Turn 1: no prior history → condense skipped → triage → force_retrieve → grade → generate.
     model1 = FakeChatModel(
         responses=[
+            Triage(needs_notes=True),
             Grade(relevant=True, reason="context answers the question"),
             AIMessage("A heap is a tree-based structure."),
         ]
@@ -446,6 +486,7 @@ async def test_condense_resolves_followup_linear_path(_engine: AsyncEngine) -> N
     model2 = FakeChatModel(
         responses=[
             CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?"),
+            Triage(needs_notes=True),  # triage
             Grade(relevant=True, reason="context answers the question"),  # grade
             AIMessage("A min-heap keeps the smallest element at the root."),  # generate
         ]

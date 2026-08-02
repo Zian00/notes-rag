@@ -19,10 +19,12 @@ from pydantic import BaseModel, Field
 
 from app.rag.graph.prompts import (
     AGENT_SYSTEM,
+    CHAT_SYSTEM,
     CONDENSE_SYSTEM,
     GENERATE_SYSTEM,
     GRADE_SYSTEM,
     REWRITE_SYSTEM,
+    TRIAGE_SYSTEM,
 )
 from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, RagState
 from app.rag.graph.tools import format_chunks_for_llm
@@ -68,7 +70,25 @@ def _format_transcript(messages: list[Any]) -> str:
     return "\n".join(lines) or "(no earlier messages)"
 
 
-def _is_conversational_reply(state: RagState, resp: Any) -> bool:
+def _groundable_context(state: RagState) -> list[dict[str, Any]]:
+    """The chunks generate may actually ground an answer in.
+
+    Empty when the grader rejected exactly these chunks and every rewrite was spent.
+    Keeping them would hand generate material it has already been told cannot answer
+    the question — inviting an answer stitched out of near-misses — and would attach
+    them to the refusal as sources, so the user reads "I couldn't find this in your
+    notes" beside four citations.
+
+    Keyed to ``context_rejected`` rather than to a turn-scoped verdict, because a turn
+    can hold several tool calls: a rejected search, a rewrite, then a document fetch.
+    Judging by "was anything searched this turn" would discard that document, whose
+    chunks no grader ever saw. ``tools_node`` clears the flag whenever it replaces
+    ``context``, so the verdict never outlives the chunks it described.
+    """
+    return [] if state.get("context_rejected") else state.get("context", [])
+
+
+def _is_conversational_reply(state: RagState, message: Any) -> bool:
     """True when the agent's reply is a final answer that needs no grounding pass.
 
     Shared by the ``agent`` node (which stamps the answer-marker) and
@@ -84,7 +104,7 @@ def _is_conversational_reply(state: RagState, resp: Any) -> bool:
       - never searched: if retrieve_notes ran and came back empty, the honest reply
         is the refusal ``generate`` produces — not whatever the agent invents.
     """
-    if getattr(resp, "tool_calls", None):
+    if getattr(message, "tool_calls", None):
         return False
     return not state.get("context") and not state.get("searched")
 
@@ -108,6 +128,19 @@ class CondensedQuestion(BaseModel):
         default="",
         description="The latest message rewritten to stand alone. "
         "Only read when is_follow_up is true.",
+    )
+
+
+class Triage(BaseModel):
+    """Structured verdict from the linear path's triage LLM.
+
+    Structured for the same reason as CondensedQuestion: asked in free text, a model
+    handed a conversation tends to answer it rather than classify it.
+    """
+
+    needs_notes: bool = Field(
+        description="True if answering requires looking in the student's notes. "
+        "False for greetings, thanks, and questions about this conversation."
     )
 
 
@@ -144,6 +177,7 @@ def make_nodes(
     # with_structured_output forces the grader to return a validated Grade object.
     grader = model.with_structured_output(Grade)
     condenser = model.with_structured_output(CondensedQuestion)
+    triager = model.with_structured_output(Triage)
 
     def _recent(state: RagState) -> list[Any]:
         """Trim message history to the last history_limit messages.
@@ -242,6 +276,31 @@ def make_nodes(
             resp.additional_kwargs[CITATIONS_KEY] = []
         return {"messages": [resp]}
 
+    async def triage(state: RagState, config: RunnableConfig) -> dict[str, Any]:
+        """Linear path only: decide whether this turn needs the notes at all.
+
+        The agentic path gets this for free — the agent either calls a tool or answers.
+        Without it the linear path force-retrieves on every message, so "hi" runs a
+        vector search, the grader rejects the results, and generate refuses a greeting.
+        """
+        raw = await triager.ainvoke(
+            [SystemMessage(TRIAGE_SYSTEM), HumanMessage(state["question"])], config
+        )
+        verdict: Triage = raw  # type: ignore[assignment]
+        return {"needs_notes": verdict.needs_notes}
+
+    async def chat(state: RagState, config: RunnableConfig) -> dict[str, Any]:
+        """Linear path only: answer a conversational turn, with no grounding contract.
+
+        Mirrors what the agentic path's `agent` node produces for the same kind of turn
+        — a marked final answer with explicitly empty citations — so both paths persist
+        and replay conversational replies identically.
+        """
+        resp = await model.ainvoke([SystemMessage(CHAT_SYSTEM), *_recent(state)], config)
+        resp.additional_kwargs[FINAL_ANSWER_KEY] = True
+        resp.additional_kwargs[CITATIONS_KEY] = []
+        return {"messages": [resp]}
+
     async def tools_node(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Execute every tool call in the last AIMessage, collect results.
 
@@ -259,6 +318,7 @@ def make_nodes(
         last = cast(AIMessage, state["messages"][-1])
         out_msgs: list[Any] = []
         context = state.get("context", [])
+        context_rejected = state.get("context_rejected", False)
         searched = state.get("searched", False)
 
         for tc in last.tool_calls:
@@ -273,6 +333,9 @@ def make_nodes(
             if tc["name"] in _CONTEXT_TOOLS and isinstance(result, list):
                 tool_content = format_chunks_for_llm(result)
                 context = result  # latest context replaces prior context
+                # A grade verdict describes the chunks the grader was shown. These are
+                # different chunks, so any earlier rejection no longer applies to them.
+                context_rejected = False
             else:
                 tool_content = str(result)
             out_msgs.append(
@@ -283,7 +346,12 @@ def make_nodes(
                 )
             )
 
-        return {"messages": out_msgs, "context": context, "searched": searched}
+        return {
+            "messages": out_msgs,
+            "context": context,
+            "context_rejected": context_rejected,
+            "searched": searched,
+        }
 
     async def grade(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Ask the LLM to judge whether the context can answer the question.
@@ -301,7 +369,7 @@ def make_nodes(
         # grader returns a Grade pydantic object; the type is Any in mypy due to
         # with_structured_output returning a broad union — cast for safety.
         verdict: Grade = raw  # type: ignore[assignment]
-        return {"relevant": verdict.relevant, "grade_reason": verdict.reason}
+        return {"context_rejected": not verdict.relevant, "grade_reason": verdict.reason}
 
     async def rewrite(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Rewrite the question for better retrieval, informed by why the last attempt failed.
@@ -341,7 +409,8 @@ def make_nodes(
         tell this grounded answer apart from `agent`'s intermediate messages (see the
         constant's docstring in state.py).
         """
-        ctx = format_chunks_for_llm(state.get("context", []))
+        chunks = _groundable_context(state)
+        ctx = format_chunks_for_llm(chunks)
         resp = await model.ainvoke(
             [
                 SystemMessage(GENERATE_SYSTEM),
@@ -353,11 +422,15 @@ def make_nodes(
         resp.additional_kwargs[FINAL_ANSWER_KEY] = True
         # Derived from the same context stream_answer's live SSE citations frame uses,
         # via the same shared helper — the two can't disagree.
-        resp.additional_kwargs[CITATIONS_KEY] = to_citations(state.get("context", []))
-        return {"messages": [resp]}
+        resp.additional_kwargs[CITATIONS_KEY] = to_citations(chunks)
+        # The cleared context is written back so the SSE citations frame, which reads
+        # final graph state, agrees with what was persisted onto the message.
+        return {"messages": [resp], "context": chunks}
 
     return {
         "condense": condense,
+        "triage": triage,
+        "chat": chat,
         "agent": agent,
         "tools": tools_node,
         "grade": grade,
@@ -369,6 +442,17 @@ def make_nodes(
 # ---------------------------------------------------------------------------
 # Routers — plain functions so they can be unit-tested without a running graph.
 # ---------------------------------------------------------------------------
+
+
+def route_after_triage(state: RagState) -> Literal["retrieve", "chat"]:
+    """Linear path only: notes-bearing turns retrieve; conversational turns just chat.
+
+    Only an explicit False diverts to chat. A missing verdict — triage having failed to
+    write one — retrieves, because the two failure modes are not equal: an unnecessary
+    search costs a little latency, while chatting about a question that needed the notes
+    answers it from the model's own knowledge with no grounding at all.
+    """
+    return "chat" if state.get("needs_notes") is False else "retrieve"
 
 
 def route_after_agent(state: RagState) -> Literal["tools", "generate", "end"]:
@@ -402,7 +486,7 @@ def make_route_after_grade(max_retries: int) -> Any:
 
     def route_after_grade(state: RagState) -> Literal["generate", "rewrite"]:
         """Relevant → generate; weak + retries left → rewrite; retries exhausted → generate."""
-        if state.get("relevant"):
+        if not state.get("context_rejected"):
             return "generate"
         if state.get("retry_count", 0) < max_retries:
             return "rewrite"
@@ -413,10 +497,13 @@ def make_route_after_grade(max_retries: int) -> Any:
 
 # Exposed for use as the terminal sentinel in builder conditional edges.
 __all__ = [
+    "CondensedQuestion",
     "Grade",
+    "Triage",
     "make_nodes",
     "route_after_agent",
     "route_after_tools",
+    "route_after_triage",
     "make_route_after_grade",
     "END",
 ]

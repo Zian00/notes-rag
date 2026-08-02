@@ -32,7 +32,7 @@ from app.core.config import Settings
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.rag.graph import build_rag_graph
-from app.rag.graph.nodes import CondensedQuestion, Grade
+from app.rag.graph.nodes import CondensedQuestion, Grade, Triage
 from app.services.chat import ChatService, ConversationNotFound
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -111,15 +111,23 @@ def _retrieve_call(query: str, tc_id: str = "t1") -> AIMessage:
     )
 
 
-def _build_service(model: FakeChatModel, maker: async_sessionmaker) -> ChatService:  # type: ignore[type-arg]
-    """Compile the graph with fakes and wrap it in a ChatService."""
-    s = _settings()
+def _build_service(
+    model: FakeChatModel,
+    maker: async_sessionmaker,  # type: ignore[type-arg]
+    checkpointer: Any = None,
+) -> ChatService:
+    """Compile the graph with fakes and wrap it in a ChatService.
+
+    Pass a shared `checkpointer` for multi-turn tests: turn 2 only resumes turn 1's
+    thread if both services were built against the same saver. Defaults to a fresh
+    InMemorySaver, which is what single-turn tests want.
+    """
     graph = build_rag_graph(
         chat_model=model,
         embeddings=FakeEmbeddingsProvider(DIM),
         sessionmaker=maker,
-        settings=s,
-        checkpointer=InMemorySaver(),
+        settings=_settings(),
+        checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
     )
     return ChatService(graph, maker)
 
@@ -351,19 +359,9 @@ async def test_stream_direct_answer_turn_does_not_inherit_previous_context(
         await _seed_doc(s, user.id)
 
     checkpointer = InMemorySaver()  # shared so turn 2 resumes the same thread
-    settings = _settings()
 
     def _svc_for(model: FakeChatModel) -> ChatService:
-        return ChatService(
-            build_rag_graph(
-                chat_model=model,
-                embeddings=FakeEmbeddingsProvider(DIM),
-                sessionmaker=maker,
-                settings=settings,
-                checkpointer=checkpointer,
-            ),
-            maker,
-        )
+        return _build_service(model, maker, checkpointer)
 
     # Turn 1 populates context. Condense is skipped — there is no prior turn yet.
     turn1 = FakeChatModel(
@@ -469,19 +467,9 @@ async def test_stream_greeting_after_a_grounded_answer(_engine: AsyncEngine) -> 
         await _seed_doc(s, user.id)
 
     checkpointer = InMemorySaver()  # shared so turn 2 resumes the same thread
-    settings = _settings()
 
     def _svc_for(model: FakeChatModel) -> ChatService:
-        return ChatService(
-            build_rag_graph(
-                chat_model=model,
-                embeddings=FakeEmbeddingsProvider(DIM),
-                sessionmaker=maker,
-                settings=settings,
-                checkpointer=checkpointer,
-            ),
-            maker,
-        )
+        return _build_service(model, maker, checkpointer)
 
     # Turn 1: a real question. condense is skipped (no prior turn).
     turn1 = FakeChatModel(
@@ -688,9 +676,11 @@ async def test_get_detail_no_synthetic_messages_after_rewrite_linear(
         user = await _make_user(s)
         await _seed_doc(s, user.id)
 
-    # force_retrieve → grade(False) → rewrite → force_retrieve → grade(True) → generate
+    # triage → force_retrieve → grade(False) → rewrite → force_retrieve → grade(True)
+    # → generate. rewrite loops back to force_retrieve, not triage, so triage runs once.
     model = FakeChatModel(
         responses=[
+            Triage(needs_notes=True),
             Grade(relevant=False, reason="off-topic"),
             AIMessage("better search query"),  # rewrite
             Grade(relevant=True, reason="context answers the question"),

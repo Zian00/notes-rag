@@ -12,10 +12,12 @@ skipped on a conversation's first message), then diverge depending on
   The LLM decides when and which tool to invoke. ``retrieve_notes`` results are
   graded; weak results trigger a query rewrite (bounded by ``max_grade_retries``).
 
-- **Linear fallback (False):** START → condense → force_retrieve → tools → grade → ...
-  → generate. For weak/local LLMs that can't reliably call tools: always retrieve
-  first, skip the agent's tool-decision, preserve grade → rewrite → generate. Useful
-  when the model struggles with tool-call formatting.
+- **Linear fallback (False):** START → condense → triage → (needs notes? force_retrieve
+  → tools → grade → ... → generate : chat → END). For weak/local LLMs that can't
+  reliably call tools: always retrieve first, skip the agent's tool-decision, preserve
+  grade → rewrite → generate. Useful when the model struggles with tool-call formatting.
+  `triage` replaces the agent's tool-call decision as the point where a conversational
+  turn is separated from one that needs the notes.
 """
 
 from typing import Any
@@ -34,6 +36,7 @@ from app.rag.graph.nodes import (
     make_route_after_grade,
     route_after_agent,
     route_after_tools,
+    route_after_triage,
 )
 from app.rag.graph.state import RagState
 from app.rag.graph.tools import build_tools
@@ -102,7 +105,14 @@ def build_rag_graph(
             return {"messages": [AIMessage(content="", tool_calls=[call])]}
 
         g.add_node("force_retrieve", force_retrieve)
-        g.add_edge("condense", "force_retrieve")
+        # Triage stands in for the tool-call decision the agent makes on the other path.
+        # Without it every message force-retrieves, so "hi" runs a vector search, the
+        # grader rejects the results, and generate refuses a greeting.
+        g.add_edge("condense", "triage")
+        g.add_conditional_edges(
+            "triage", route_after_triage, {"retrieve": "force_retrieve", "chat": "chat"}
+        )
+        g.add_edge("chat", END)
         g.add_edge("force_retrieve", "tools")
         # tools always produces retrieve_notes output → grade directly.
         g.add_edge("tools", "grade")

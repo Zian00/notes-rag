@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.repositories.conversation import ConversationRepository
-from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY
+from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, new_turn_inputs
 from app.services.citations import to_citations
 
 # Maximum characters used as the conversation title (derived from first question).
@@ -105,22 +105,9 @@ class ChatService:
             "tags": tags,
             "top_k": top_k,
         }}
-        # Per-turn reset of every derived state field. `messages` deliberately
-        # accumulates across turns (add_messages reducer + checkpointer), but the
-        # fields below describe one turn's retrieval attempt only and must not leak
-        # into the next. `context` in particular is written *only* by the tools node,
-        # so on a turn where the agent answers directly (a greeting) that node never
-        # runs — without this reset the previous turn's chunks survive, making
-        # generate refuse the greeting and stamping stale sources onto the reply.
-        inputs: dict[str, Any] = {
-            "messages": [HumanMessage(question)],
-            "question": question,
-            "retry_count": 0,
-            "context": [],
-            "relevant": False,
-            "grade_reason": "",
-            "searched": False,
-        }
+        # Built in state.py, beside the field declarations, so a newly-added derived
+        # field cannot be left out of the per-turn reset from over here.
+        inputs: dict[str, Any] = new_turn_inputs(question)
 
         streamed_any = False  # becomes True once a token frame is yielded
 
