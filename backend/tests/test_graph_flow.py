@@ -23,7 +23,7 @@ from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.rag.graph import build_rag_graph
-from app.rag.graph.nodes import Grade
+from app.rag.graph.nodes import CondensedQuestion, Grade
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -363,13 +363,13 @@ async def test_multi_turn(_engine: AsyncEngine) -> None:
     # Turn 2 has prior history, so condense DOES call the model first.
     model = FakeChatModel(
         responses=[
-            # Turn 1: (condense skipped) → agent → no tool call → generate
-            AIMessage("Hello, I'm here to help."),  # agent (direct answer, no tools)
-            AIMessage("Hello, I'm here to help."),  # generate
-            # Turn 2: condense → agent → no tool call → generate
-            AIMessage("what did I say?"),  # condense (already standalone, unchanged)
-            AIMessage("Yes, as I recall, you greeted me."),  # agent
-            AIMessage("Yes, as I recall, you greeted me."),  # generate
+            # Neither turn calls a tool, so both end at the agent — a direct reply with
+            # nothing citable and no search is the turn's answer, and generate is skipped.
+            # Turn 1: (condense skipped) → agent → END
+            AIMessage("Hello, I'm here to help."),
+            # Turn 2: condense → agent → END
+            CondensedQuestion(is_follow_up=False),  # already standalone, left unchanged
+            AIMessage("Yes, as I recall, you greeted me."),
         ]
     )
     graph = _build_graph(model, maker)
@@ -445,7 +445,7 @@ async def test_condense_resolves_followup_linear_path(_engine: AsyncEngine) -> N
     # force_retrieve must then use the CONDENSED question, not the raw follow-up.
     model2 = FakeChatModel(
         responses=[
-            AIMessage("what about a min-heap?"),  # condense
+            CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?"),
             Grade(relevant=True, reason="context answers the question"),  # grade
             AIMessage("A min-heap keeps the smallest element at the root."),  # generate
         ]
@@ -529,7 +529,7 @@ async def test_condense_output_reaches_agent_ephemerally(_engine: AsyncEngine) -
     # Turn 2: CapturingFake records every message list passed to _agenerate.
     model2 = CapturingFake(
         responses=[
-            AIMessage("what about a min-heap?"),  # condense
+            CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?"),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -556,8 +556,8 @@ async def test_condense_output_reaches_agent_ephemerally(_engine: AsyncEngine) -
         config,
     )
 
-    # captured[0] = condense's call, captured[1] = agent's call (grade bypasses
-    # _agenerate via with_structured_output's own runnable).
-    agent_call_msgs = captured[1]
+    # captured[0] is the AGENT's call: both condense and grade now use
+    # with_structured_output, whose own runnable bypasses _agenerate entirely.
+    agent_call_msgs = captured[0]
     full_text = " ".join(str(getattr(m, "content", "")) for m in agent_call_msgs)
     assert "what about a min-heap?" in full_text

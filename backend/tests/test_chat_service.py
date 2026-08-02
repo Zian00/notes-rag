@@ -32,7 +32,7 @@ from app.core.config import Settings
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.rag.graph import build_rag_graph
-from app.rag.graph.nodes import Grade
+from app.rag.graph.nodes import CondensedQuestion, Grade
 from app.services.chat import ChatService, ConversationNotFound
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -292,7 +292,7 @@ async def test_stream_reuses_existing_conversation(_engine: AsyncEngine) -> None
     # condense makes an LLM call first — its response is echoed back unchanged.
     model2 = FakeChatModel(
         responses=[
-            AIMessage("and what about a min-heap?"),  # condense
+            CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?"),
             _retrieve_call("heap", "t2"),
             Grade(relevant=True, reason="context answers the question"),
             AIMessage("answer 2"),
@@ -327,6 +327,200 @@ async def test_stream_reuses_existing_conversation(_engine: AsyncEngine) -> None
         all_convos = await ConversationRepository(s).list_for_user(user.id)
     user_convos = [c for c in all_convos if c.id == convo_id]
     assert len(user_convos) == 1
+
+
+# ---------------------------------------------------------------------------
+# 3b. A no-tool turn must not inherit the previous turn's context
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_direct_answer_turn_does_not_inherit_previous_context(
+    _engine: AsyncEngine,
+) -> None:
+    """A turn where the agent answers directly must report no sources.
+
+    The agent answers greetings itself, so the tools node never runs on that turn.
+    Since `context` is written *only* by the tools node, the checkpointer would
+    otherwise replay the previous turn's chunks into it — which both made generate
+    refuse the greeting and attributed the earlier answer's sources to it.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    checkpointer = InMemorySaver()  # shared so turn 2 resumes the same thread
+    settings = _settings()
+
+    def _svc_for(model: FakeChatModel) -> ChatService:
+        return ChatService(
+            build_rag_graph(
+                chat_model=model,
+                embeddings=FakeEmbeddingsProvider(DIM),
+                sessionmaker=maker,
+                settings=settings,
+                checkpointer=checkpointer,
+            ),
+            maker,
+        )
+
+    # Turn 1 populates context. Condense is skipped — there is no prior turn yet.
+    turn1 = FakeChatModel(
+        responses=[
+            _retrieve_call("heap", "t1"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure [1]."),
+        ]
+    )
+    frames1 = await _collect_frames(_svc_for(turn1).stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="what is a heap?",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames1 if e == "meta")["conversation_id"])
+    # Guards the test itself: if turn 1 retrieved nothing there is no stale context
+    # to leak, so turn 2's assertion below would pass for the wrong reason.
+    assert next(d for e, d in frames1 if e == "citations"), "turn 1 should have sources"
+
+    # Turn 2 is a greeting: condense → agent replies directly → generate. No tools node.
+    turn2 = FakeChatModel(
+        responses=[
+            CondensedQuestion(is_follow_up=False),  # a greeting is not a follow-up
+            AIMessage("Hello! How can I help with your notes?"),  # agent, no tool_calls
+            AIMessage("Hello! How can I help with your notes?"),  # generate
+        ]
+    )
+    frames2 = await _collect_frames(_svc_for(turn2).stream_answer(
+        user_id=user.id,
+        conversation_id=convo_id,
+        question="hi",
+    ))
+
+    assert next(d for e, d in frames2 if e == "citations") == []
+
+
+# ---------------------------------------------------------------------------
+# 3c. A greeting is answered by the agent, not refused by generate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_greeting_returns_the_agents_reply(_engine: AsyncEngine) -> None:
+    """"hi" must come back as a greeting, and the conversation must survive.
+
+    generate refuses whenever it has no context, so routing a greeting through it
+    produced "I couldn't find this in your notes." in reply to "hi". The agent's own
+    reply now ends the turn — and it must still reach the client as a token frame,
+    or `streamed_any` stays False and the brand-new conversation row is deleted as
+    an orphan, making the chat vanish from the sidebar.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    # A single response: the agent answers directly. If generate were still reached
+    # it would need a second response and raise IndexError — so this scripting also
+    # proves the node is skipped entirely.
+    model = FakeChatModel(responses=[AIMessage("Hello! How can I help with your notes?")])
+    svc = _build_service(model, maker)
+
+    frames = await _collect_frames(
+        svc.stream_answer(user_id=user.id, conversation_id=None, question="hi")
+    )
+
+    tokens = "".join(d["delta"] for e, d in frames if e == "token")
+    assert "Hello!" in tokens
+    assert "couldn't find this in your notes" not in tokens
+    assert next(d for e, d in frames if e == "citations") == []
+
+    # The conversation row must survive (streamed_any was set → no orphan cleanup).
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+    async with maker() as s:
+        from app.db.repositories.conversation import ConversationRepository
+        assert await ConversationRepository(s).get_for_user(convo_id, user.id) is not None
+
+    # And it must be replayable — get_detail keys off the same marker the agent set.
+    detail = await svc.get_detail(convo_id, user.id)
+    assistant = [m for m in detail["messages"] if m["role"] == "assistant"]
+    assert len(assistant) == 1
+    assert "Hello!" in assistant[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# 3d. Greeting AFTER a successful grounded answer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_greeting_after_a_grounded_answer(_engine: AsyncEngine) -> None:
+    """Q → grounded answer → "hi" must greet, and must not disturb the earlier turn.
+
+    This is the full-stack version of the reported bug. Two separate faults met here:
+    the greeting inherited the previous turn's `context` (so it was refused AND shown
+    the earlier answer's sources), and it was routed through generate at all. Both the
+    live stream and the replayed history are asserted, since the original symptom was
+    visible in one and not the other.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    checkpointer = InMemorySaver()  # shared so turn 2 resumes the same thread
+    settings = _settings()
+
+    def _svc_for(model: FakeChatModel) -> ChatService:
+        return ChatService(
+            build_rag_graph(
+                chat_model=model,
+                embeddings=FakeEmbeddingsProvider(DIM),
+                sessionmaker=maker,
+                settings=settings,
+                checkpointer=checkpointer,
+            ),
+            maker,
+        )
+
+    # Turn 1: a real question. condense is skipped (no prior turn).
+    turn1 = FakeChatModel(
+        responses=[
+            _retrieve_call("heap", "t1"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure [1]."),
+        ]
+    )
+    frames1 = await _collect_frames(_svc_for(turn1).stream_answer(
+        user_id=user.id, conversation_id=None, question="what is a heap?",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames1 if e == "meta")["conversation_id"])
+    assert next(d for e, d in frames1 if e == "citations"), "turn 1 must have sources"
+
+    # Turn 2: only two model calls are scripted — condense, then the agent's reply.
+    # If generate were still reached it would need a third and raise IndexError, so
+    # this scripting is itself the assertion that the turn ends at the agent.
+    turn2 = FakeChatModel(
+        responses=[
+            CondensedQuestion(is_follow_up=False),  # a greeting is not a follow-up
+            AIMessage("Hello! How can I help with your notes?"),  # agent, no tool call
+        ]
+    )
+    frames2 = await _collect_frames(_svc_for(turn2).stream_answer(
+        user_id=user.id, conversation_id=convo_id, question="hi",
+    ))
+
+    tokens = "".join(d["delta"] for e, d in frames2 if e == "token")
+    assert "Hello!" in tokens
+    assert "couldn't find this in your notes" not in tokens
+    assert next(d for e, d in frames2 if e == "citations") == []
+
+    # Replayed history: both answers present, sources attached to the right one.
+    detail = await _svc_for(turn2).get_detail(convo_id, user.id)
+    assistant = [m for m in detail["messages"] if m["role"] == "assistant"]
+    assert len(assistant) == 2, f"expected 2 answers, got {[m['content'] for m in assistant]}"
+    assert assistant[0]["citations"], "turn 1's sources must survive the greeting"
+    assert not assistant[1]["citations"], "a greeting must claim no sources"
 
 
 # ---------------------------------------------------------------------------
@@ -540,14 +734,67 @@ async def test_get_detail_excludes_agent_node_answer(_engine: AsyncEngine) -> No
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
     async with maker() as s:
         user = await _make_user(s)
-        await _seed_doc(s, user.id)
+        doc = await _seed_doc(s, user.id)
 
-    # agent answers directly (content, no tool_calls) → routes straight to generate.
+    # Reading a document routes back to the agent, which then writes a draft answer
+    # with no tool_calls. Because context is now non-empty that draft is NOT the end
+    # of the turn — generate still runs and owns the answer, so the draft must stay
+    # out of replayed history.
     model = FakeChatModel(
         responses=[
-            AIMessage("A weak entity cannot be identified by its own attributes."),
-            AIMessage("I couldn't find this in your notes."),
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "get_document_content",
+                    "args": {"document_id": str(doc.id)},
+                    "id": "tc1",
+                }],
+            ),
+            AIMessage("Ungrounded draft the agent wrote."),
+            AIMessage("A heap is a tree-based structure [1]."),
         ]
+    )
+    svc = _build_service(model, maker)
+
+    frames = await _collect_frames(svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="summarise my notes",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+
+    detail = await svc.get_detail(convo_id, user.id)
+    assistant_contents = [m["content"] for m in detail["messages"] if m["role"] == "assistant"]
+
+    assert assistant_contents == ["A heap is a tree-based structure [1]."], (
+        f"Expected only generate's grounded answer, got: {assistant_contents}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_answering_a_topic_without_searching_is_no_longer_blocked(
+    _engine: AsyncEngine,
+) -> None:
+    """Documents a KNOWN GAP, so it fails loudly if the trade-off is revisited.
+
+    Ending the turn on a conversational reply means the graph can no longer tell a
+    greeting from a subject question the agent chose not to search for — both are
+    "no tool call, nothing citable, never searched". Previously generate caught the
+    latter and refused. That guarantee now rests solely on AGENT_SYSTEM, which
+    instructs the model to always call a tool for subject-matter questions.
+
+    If this ever starts happening in practice, the fix belongs in the agent prompt or
+    in an explicit conversational/subject signal — not in weakening the routing rule,
+    which is what makes greetings work at all.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    # A disobedient agent: answers a subject question outright, never searching.
+    model = FakeChatModel(
+        responses=[AIMessage("A weak entity cannot be identified by its own attributes.")]
     )
     svc = _build_service(model, maker)
 
@@ -556,14 +803,10 @@ async def test_get_detail_excludes_agent_node_answer(_engine: AsyncEngine) -> No
         conversation_id=None,
         question="explain weak entity",
     ))
-    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
 
-    detail = await svc.get_detail(convo_id, user.id)
-    assistant_contents = [m["content"] for m in detail["messages"] if m["role"] == "assistant"]
-
-    assert assistant_contents == ["I couldn't find this in your notes."], (
-        f"Expected only generate's grounded answer, got: {assistant_contents}"
-    )
+    tokens = "".join(d["delta"] for e, d in frames if e == "token")
+    assert "weak entity cannot be identified" in tokens  # reaches the user, ungrounded
+    assert next(d for e, d in frames if e == "citations") == []  # but claims no sources
 
 
 @pytest.mark.asyncio

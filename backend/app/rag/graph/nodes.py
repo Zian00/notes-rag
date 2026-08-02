@@ -46,6 +46,71 @@ def _message_text(resp: Any) -> str:
     return resp.content if isinstance(resp.content, str) else str(resp.content)
 
 
+def _format_transcript(messages: list[Any]) -> str:
+    """Render prior turns as quoted text rather than as chat turns.
+
+    Handing the model real Human/AI messages stands it at the end of a conversation,
+    where the instinct to reply as the assistant beats any instruction to rewrite.
+    Flattened into one block it is material to read, not a conversation to continue.
+    Tool traffic is dropped: it never carries the referent of a pronoun.
+    """
+    lines: list[str] = []
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            role = "User"
+        elif isinstance(m, AIMessage):
+            role = "Assistant"
+        else:
+            continue
+        text = _message_text(m).strip()
+        if text:
+            lines.append(f"{role}: {text}")
+    return "\n".join(lines) or "(no earlier messages)"
+
+
+def _is_conversational_reply(state: RagState, resp: Any) -> bool:
+    """True when the agent's reply is a final answer that needs no grounding pass.
+
+    Shared by the ``agent`` node (which stamps the answer-marker) and
+    ``route_after_agent`` (which ends the turn) so the two can never disagree about
+    what counts as conversational — a disagreement would either show the user
+    nothing or persist two answers for one turn.
+
+    All three conditions matter:
+      - no tool_calls: the agent is answering, not delegating.
+      - empty context: nothing citable was retrieved, so ``generate`` could only
+        add a refusal. A document summary DOES have context and must go through
+        ``generate`` to get its bracket citations.
+      - never searched: if retrieve_notes ran and came back empty, the honest reply
+        is the refusal ``generate`` produces — not whatever the agent invents.
+    """
+    if getattr(resp, "tool_calls", None):
+        return False
+    return not state.get("context") and not state.get("searched")
+
+
+class CondensedQuestion(BaseModel):
+    """Structured verdict from the condenser LLM.
+
+    Structured rather than free text on purpose. When condense returned a bare string,
+    "answer the user" and "rewrite the question" produced indistinguishable output, and
+    the model repeatedly chose the former — a refusal ("I'm unable to access your
+    personal notes...") was stored as the turn's question and handed to the agent,
+    which then apologised for a misunderstanding it hadn't made. A schema removes the
+    choice: the model fills fields, it does not hold a conversation.
+    """
+
+    is_follow_up: bool = Field(
+        description="True ONLY if the latest message cannot be understood without the "
+        "earlier turns — it uses a pronoun or an implicit reference."
+    )
+    standalone_question: str = Field(
+        default="",
+        description="The latest message rewritten to stand alone. "
+        "Only read when is_follow_up is true.",
+    )
+
+
 class Grade(BaseModel):
     """Structured verdict from the grader LLM."""
 
@@ -78,6 +143,7 @@ def make_nodes(
     agent_model = model.bind_tools(tools)
     # with_structured_output forces the grader to return a validated Grade object.
     grader = model.with_structured_output(Grade)
+    condenser = model.with_structured_output(CondensedQuestion)
 
     def _recent(state: RagState) -> list[Any]:
         """Trim message history to the last history_limit messages.
@@ -90,24 +156,17 @@ def make_nodes(
         Dropping leading ToolMessage(s) left dangling by the cut never removes
         more than one AIMessage's worth of already-old tool results.
 
-        Agent direct answers from earlier turns are also dropped. When the agent
-        judges no tool is needed it writes an answer from the model's own
-        knowledge — ungrounded, never shown to the user (get_detail surfaces only
-        FINAL_ANSWER_KEY-marked messages), and replaying it as history invites
-        later answers to lean on it. Such a message is an AIMessage with neither
-        tool_calls nor that marker.
-
-        The window's LAST message is exempt: on the direct-answer path generate
-        runs immediately after agent with empty context, and GENERATE_SYSTEM tells
-        it to refuse when context is empty — the agent's reply sitting last is the
-        only thing that lets a greeting answer a greeting rather than reply
-        "I couldn't find this in your notes".
+        Ungrounded agent drafts are also dropped. When the agent writes an answer
+        that still has to pass through ``generate`` (e.g. after reading a document)
+        that draft is never shown to the user, and replaying it invites later
+        answers to lean on it instead of on the context. Such a message is an
+        AIMessage with neither tool_calls nor the final-answer marker — a genuine
+        conversational reply carries the marker (see ``_is_conversational_reply``)
+        and so survives this filter on its own merits.
         """
         trimmed = state["messages"][-history_limit:]
 
-        def _is_stale_agent_answer(msg: Any, index: int) -> bool:
-            if index == len(trimmed) - 1:  # current turn's own reply — keep
-                return False
+        def _is_stale_agent_answer(msg: Any) -> bool:
             if not isinstance(msg, AIMessage):
                 return False
             # tool_calls messages must survive: their ToolMessage depends on them.
@@ -115,7 +174,7 @@ def make_nodes(
                 return False
             return not msg.additional_kwargs.get(FINAL_ANSWER_KEY)
 
-        kept = [m for i, m in enumerate(trimmed) if not _is_stale_agent_answer(m, i)]
+        kept = [m for m in trimmed if not _is_stale_agent_answer(m)]
         while kept and isinstance(kept[0], ToolMessage):
             kept = kept[1:]
         return kept
@@ -129,11 +188,33 @@ def make_nodes(
         transcript still reflects exactly what the user typed; ``agent`` surfaces the
         resolved question to its own tool-call reasoning via an ephemeral note instead
         (see below) rather than this node injecting a synthetic message into history.
+
+        The rewrite is applied ONLY to genuine follow-ups. A message that already stands
+        alone is left exactly as typed — rewriting it can only distort it, and every
+        observed failure was of that kind ("what notes do i have?" became a refusal).
+        This keeps the blast radius of a bad rewrite inside the one case that needs one.
         """
         if len(state["messages"]) < _MIN_MESSAGES_FOR_CONDENSE:
             return {}
-        resp = await model.ainvoke([SystemMessage(CONDENSE_SYSTEM), *_recent(state)], config)
-        return {"question": _message_text(resp)}
+        # _recent's last entry is this turn's own message; the rest is prior context.
+        transcript = _format_transcript(_recent(state)[:-1])
+        raw = await condenser.ainvoke(
+            [
+                SystemMessage(CONDENSE_SYSTEM),
+                HumanMessage(
+                    f"Conversation so far:\n{transcript}\n\n"
+                    f"Latest message: {state['question']}"
+                ),
+            ],
+            config,
+        )
+        # with_structured_output is typed as a broad union; the runtime object is ours.
+        result: CondensedQuestion = raw  # type: ignore[assignment]
+        if not result.is_follow_up:
+            return {}
+        rewritten = result.standalone_question.strip()
+        # An empty rewrite would send the retriever searching for "" — keep the original.
+        return {"question": rewritten} if rewritten else {}
 
     async def agent(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Decide whether to call a tool or answer directly.
@@ -151,6 +232,14 @@ def make_nodes(
         if state.get("question"):
             msgs.append(HumanMessage(f"(Current question to answer: {state['question']})"))
         resp = await agent_model.ainvoke(msgs, config)
+        # A conversational reply ends the turn here (route_after_agent sends it to
+        # END), so it is this turn's real answer and must carry the marker that
+        # get_detail and the SSE layer both key off. Citations are explicitly empty
+        # rather than absent — nothing was retrieved, and an absent key means
+        # "answered before citations were persisted" to get_detail's legacy path.
+        if _is_conversational_reply(state, resp):
+            resp.additional_kwargs[FINAL_ANSWER_KEY] = True
+            resp.additional_kwargs[CITATIONS_KEY] = []
         return {"messages": [resp]}
 
     async def tools_node(state: RagState, config: RunnableConfig) -> dict[str, Any]:
@@ -170,8 +259,14 @@ def make_nodes(
         last = cast(AIMessage, state["messages"][-1])
         out_msgs: list[Any] = []
         context = state.get("context", [])
+        searched = state.get("searched", False)
 
         for tc in last.tool_calls:
+            # Latches on for the rest of the turn: once the notes have been searched,
+            # an empty context means "found nothing" and must reach generate's refusal
+            # rather than being mistaken for a turn that needed no search at all.
+            if tc["name"] == "retrieve_notes":
+                searched = True
             result = await tools_by_name[tc["name"]].ainvoke(tc["args"], config=config)
             # Context tools return chunk dicts with a "content" key → format for the LLM.
             # list_documents returns plain dicts (no "content") → use str repr.
@@ -188,7 +283,7 @@ def make_nodes(
                 )
             )
 
-        return {"messages": out_msgs, "context": context}
+        return {"messages": out_msgs, "context": context, "searched": searched}
 
     async def grade(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Ask the LLM to judge whether the context can answer the question.
@@ -276,10 +371,18 @@ def make_nodes(
 # ---------------------------------------------------------------------------
 
 
-def route_after_agent(state: RagState) -> Literal["tools", "generate"]:
-    """If the agent emitted a tool call, dispatch to tools; else go straight to generate."""
+def route_after_agent(state: RagState) -> Literal["tools", "generate", "end"]:
+    """Tool call → tools; conversational reply → end the turn; otherwise → generate.
+
+    Ending the turn on a conversational reply keeps ``generate`` out of the loop for
+    greetings and "what notes do I have?", where it has nothing to ground against and
+    its grounding contract would force the refusal phrase. The agent already wrote the
+    answer; running a second, context-starved model call over it can only make it worse.
+    """
     last = state["messages"][-1]
-    return "tools" if getattr(last, "tool_calls", None) else "generate"
+    if getattr(last, "tool_calls", None):
+        return "tools"
+    return "end" if _is_conversational_reply(state, last) else "generate"
 
 
 def route_after_tools(state: RagState) -> Literal["grade", "agent"]:

@@ -17,7 +17,7 @@ import uuid
 import pytest
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
-from app.rag.graph.nodes import Grade
+from app.rag.graph.nodes import CondensedQuestion, Grade
 from httpx import AsyncClient
 from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -185,7 +185,7 @@ async def test_chat_second_turn_continues_thread(
     # makes an LLM call first.
     # Reset _idx so the new response list is consumed from the beginning.
     fake_chat_model.responses = [
-        AIMessage("what about a min-heap?"),  # condense
+        CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?"),
         AIMessage(
             content="",
             tool_calls=[{"name": "retrieve_notes", "args": {"query": "min-heap"}, "id": "t2"}],

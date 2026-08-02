@@ -35,6 +35,7 @@ from typing import Any
 import pytest
 from app.core.config import Settings
 from app.rag.graph import build_rag_graph
+from app.rag.graph.nodes import CondensedQuestion
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -89,13 +90,13 @@ async def test_real_postgres_checkpointer_persists_across_turns(
 
     model = FakeChatModel(
         responses=[
-            # Turn 1: (no prior history → condense skipped) → agent → generate
-            AIMessage("Hello, this is turn one."),  # agent
-            AIMessage("Hello, this is turn one."),  # generate
-            # Turn 2: condense (prior history exists) → agent → generate
-            AIMessage("what did I say before?"),  # condense
-            AIMessage("This is turn two, continuing from turn one."),  # agent
-            AIMessage("This is turn two, continuing from turn one."),  # generate
+            # Neither turn calls a tool, so both end at the agent (no citable context and
+            # no search → the agent's reply is the answer, generate is skipped).
+            # Turn 1: (no prior history → condense skipped) → agent → END
+            AIMessage("Hello, this is turn one."),
+            # Turn 2: condense (prior history exists) → agent → END
+            CondensedQuestion(is_follow_up=False),  # already standalone, left unchanged
+            AIMessage("This is turn two, continuing from turn one."),
         ]
     )
 

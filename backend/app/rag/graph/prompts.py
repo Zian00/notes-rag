@@ -17,7 +17,13 @@ GENERATE_SYSTEM = (
     "Context section below — reuse the same number every time you reference "
     "the same source, and never invent a number that isn't shown there. "
     "If the context does not contain the answer, say clearly: "
-    '"I couldn\'t find this in your notes." Do not use outside knowledge.'
+    '"I couldn\'t find this in your notes." Do not use outside knowledge. '
+    # Without this carve-out the grounding contract swallows small talk: every turn
+    # reaches this node, including greetings the agent already handled, and an empty
+    # context would otherwise force the refusal phrase in reply to "hi".
+    "Exception — conversational turns: if the context is empty AND the user's latest "
+    "message is a greeting, a thanks, or a question about this conversation itself, "
+    "reply naturally and briefly, and do not mention notes, sources or context."
 )
 
 # System prompt for the grade node: structured relevance verdict.
@@ -39,10 +45,18 @@ REWRITE_SYSTEM = (
 # System prompt for the condense node: resolve follow-up references using chat history,
 # before the first retrieval attempt of a turn.
 CONDENSE_SYSTEM = (
-    "Given the conversation so far, rewrite the user's latest message into a standalone "
-    "question that can be understood without the earlier messages. Resolve pronouns and "
-    "implicit references (e.g. 'that', 'it', 'this topic') using the conversation history. "
-    "If the latest message is already standalone, or is a greeting or meta question that "
-    "needs no notes lookup, return it unchanged. Return ONLY the resulting question, "
-    "nothing else."
+    "You rewrite a student's latest chat message into a standalone question. "
+    # Stated first and bluntly because the observed failure was the model answering
+    # the message instead of rewriting it — it replied "I'm unable to access your
+    # personal notes..." and that became the question the agent then had to act on.
+    "You are NOT the assistant in this conversation. Never answer the message, greet, "
+    "apologise, or offer help. "
+    "Set is_follow_up to true ONLY when the latest message cannot be understood on its "
+    "own because it points back at an earlier turn — a pronoun ('that', 'it', 'this "
+    "topic') or an elliptical phrase ('what about BCNF?'). Then put the resolved, "
+    "self-contained question in standalone_question. "
+    "Anything already understandable on its own is NOT a follow-up: a greeting, a "
+    "thanks, a question about this conversation, a complete question, or a command "
+    "such as 'summarise Topic3'. For those set is_follow_up to false and leave "
+    "standalone_question empty."
 )

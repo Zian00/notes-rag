@@ -105,21 +105,57 @@ class ChatService:
             "tags": tags,
             "top_k": top_k,
         }}
+        # Per-turn reset of every derived state field. `messages` deliberately
+        # accumulates across turns (add_messages reducer + checkpointer), but the
+        # fields below describe one turn's retrieval attempt only and must not leak
+        # into the next. `context` in particular is written *only* by the tools node,
+        # so on a turn where the agent answers directly (a greeting) that node never
+        # runs — without this reset the previous turn's chunks survive, making
+        # generate refuse the greeting and stamping stale sources onto the reply.
         inputs: dict[str, Any] = {
             "messages": [HumanMessage(question)],
             "question": question,
             "retry_count": 0,
+            "context": [],
+            "relevant": False,
+            "grade_reason": "",
+            "searched": False,
         }
 
         streamed_any = False  # becomes True once a token frame is yielded
 
         try:
-            # stream_mode="messages" yields (msg, metadata) tuples; we only emit tokens
-            # from the "generate" node so the client doesn't see intermediate tool messages.
-            async for msg, metadata in self._graph.astream(inputs, config, stream_mode="messages"):
-                if metadata.get("langgraph_node") == "generate" and getattr(msg, "content", ""):
-                    streamed_any = True
-                    yield _sse("token", {"delta": msg.content})
+            # Two stream modes, because the two kinds of answer arrive differently:
+            #
+            # "messages" — token-by-token from `generate`, the grounded-answer path.
+            #   Filtered to that node so intermediate tool chatter never reaches the client.
+            #
+            # "updates" — whole state patches, emitted after a node finishes. This is how
+            #   a conversational reply (greeting, doc listing) is sent: it comes from the
+            #   `agent` node, which may also emit prose *before* deciding to call a tool.
+            #   Streaming that node's tokens live would put such prose on screen before we
+            #   could know a tool call was coming, and it can't be retracted. Waiting for
+            #   the completed node lets us send only what the final-answer marker confirms
+            #   is an answer. The client's own reveal buffer re-animates it, so a single
+            #   frame still types out on screen.
+            stream_modes = ["messages", "updates"]
+            async for mode, payload in self._graph.astream(
+                inputs, config, stream_mode=stream_modes
+            ):
+                if mode == "messages":
+                    msg, metadata = payload
+                    if metadata.get("langgraph_node") == "generate" and getattr(msg, "content", ""):
+                        streamed_any = True
+                        yield _sse("token", {"delta": msg.content})
+                elif mode == "updates":
+                    for node_name, patch in payload.items():
+                        if node_name != "agent" or not isinstance(patch, dict):
+                            continue
+                        for m in patch.get("messages", []):
+                            marked = getattr(m, "additional_kwargs", {}).get(FINAL_ANSWER_KEY)
+                            if marked and getattr(m, "content", ""):
+                                streamed_any = True
+                                yield _sse("token", {"delta": m.content})
 
             # After streaming, fetch the final state to extract grounding sources.
             state = await self._graph.aget_state(config)

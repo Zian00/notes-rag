@@ -32,6 +32,11 @@ class RagState(TypedDict, total=False):
     question: str  # current (possibly rewritten) query
     context: list[dict[str, Any]]  # chunks from the latest retrieve/get-document call
     relevant: bool  # grade verdict: is context relevant to the question?
+    # True once retrieve_notes has run in THIS turn. Distinguishes "the notes were
+    # searched and came back empty" (must refuse — the anti-hallucination contract)
+    # from "no search was ever needed" (a greeting, or listing what documents exist),
+    # which look identical from `context` alone since both leave it empty.
+    searched: bool
     # Named grade_reason, not reason: RagState is one flat namespace shared by every
     # node's return patch, so a bare "reason" would invite collisions with any future
     # per-node reason field. Grader's explanation for the verdict; consumed by rewrite.

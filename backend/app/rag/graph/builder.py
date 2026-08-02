@@ -79,7 +79,11 @@ def build_rag_graph(
         # --- Agentic path: LLM decides which tool to call (or to answer directly). ---
         g.add_edge("condense", "agent")
         g.add_conditional_edges(
-            "agent", route_after_agent, {"tools": "tools", "generate": "generate"}
+            "agent",
+            route_after_agent,
+            # "end": a conversational reply (greeting, "what notes do I have?") is
+            # already the final answer — see route_after_agent.
+            {"tools": "tools", "generate": "generate", "end": END},
         )
         g.add_conditional_edges(
             "tools", route_after_tools, {"grade": "grade", "agent": "agent"}

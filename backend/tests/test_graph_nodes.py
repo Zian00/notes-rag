@@ -13,13 +13,15 @@ from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
 from app.rag.graph.nodes import (
+    CondensedQuestion,
     Grade,
+    _message_text,
     make_nodes,
     make_route_after_grade,
     route_after_agent,
     route_after_tools,
 )
-from app.rag.graph.state import FINAL_ANSWER_KEY
+from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY
 from app.rag.graph.tools import build_tools
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -94,53 +96,131 @@ async def test_condense_skips_on_first_message(_engine: AsyncEngine) -> None:
     assert result == {}
 
 
-@pytest.mark.asyncio
-async def test_condense_resolves_followup_using_history(_engine: AsyncEngine) -> None:
-    """A follow-up question is rewritten into a standalone one using prior turns."""
-    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    model = FakeChatModel(responses=[AIMessage("what about a min-heap?")])
-    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
-    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
-
-    state: dict[str, Any] = {
+def _condense_state(question: str) -> dict[str, Any]:
+    """State with one completed prior turn, so condense runs rather than skipping."""
+    # Marked, as generate marks every real answer — an unmarked AIMessage is an
+    # ungrounded draft and _recent strips it, so it would never reach condense.
+    answer = AIMessage("A heap is a tree-based structure.")
+    answer.additional_kwargs[FINAL_ANSWER_KEY] = True
+    return {
         "messages": [
             HumanMessage("what is a heap?"),
-            AIMessage("A heap is a tree-based structure."),
-            HumanMessage("what about a min one?"),
+            answer,
+            HumanMessage(question),
         ],
-        "question": "what about a min one?",
+        "question": question,
         "context": [],
         "retry_count": 0,
     }
-    result = await nodes["condense"](state, _CONFIG)
+
+
+@pytest.mark.asyncio
+async def test_condense_resolves_followup_using_history(_engine: AsyncEngine) -> None:
+    """A genuine follow-up is rewritten into a standalone question."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(
+        responses=[
+            CondensedQuestion(is_follow_up=True, standalone_question="what about a min-heap?")
+        ]
+    )
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    result = await nodes["condense"](_condense_state("what about a min one?"), _CONFIG)
     assert result == {"question": "what about a min-heap?"}
 
 
 @pytest.mark.asyncio
-async def test_condense_passes_through_already_standalone_question(
-    _engine: AsyncEngine,
+@pytest.mark.parametrize(
+    "question",
+    [
+        "hi",
+        "what notes do i have?",
+        "summarise Topic3 BCNF(1)",
+        "what is a binary search tree?",
+    ],
+)
+async def test_condense_leaves_standalone_messages_untouched(
+    _engine: AsyncEngine, question: str
 ) -> None:
-    """An already-standalone question is returned unchanged (per CONDENSE_SYSTEM's
-    instruction not to rewrite what doesn't need it)."""
+    """A message that stands alone must reach the agent exactly as typed.
+
+    These four are the real cases observed in production. Condense answered three of
+    them instead of rewriting — "what notes do i have?" became "I'm unable to access
+    your personal notes...", which was then stored as the turn's question and handed
+    to the agent, which apologised for a misunderstanding. Returning {} leaves
+    `question` as the user typed it, so a wrong rewrite cannot reach the agent at all.
+    """
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    # The fake model echoes the question back verbatim, simulating a real LLM
-    # correctly recognising nothing needs resolving.
-    model = FakeChatModel(responses=[AIMessage("what is a binary search tree?")])
+    # Even when the model fills in a rewrite, is_follow_up=False must discard it.
+    model = FakeChatModel(
+        responses=[
+            CondensedQuestion(
+                is_follow_up=False,
+                standalone_question="I'm unable to access your personal notes.",
+            )
+        ]
+    )
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
     nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
 
-    state: dict[str, Any] = {
-        "messages": [
-            HumanMessage("what is a heap?"),
-            AIMessage("A heap is a tree-based structure."),
-            HumanMessage("what is a binary search tree?"),
-        ],
-        "question": "what is a binary search tree?",
-        "context": [],
-        "retry_count": 0,
-    }
-    result = await nodes["condense"](state, _CONFIG)
-    assert result == {"question": "what is a binary search tree?"}
+    result = await nodes["condense"](_condense_state(question), _CONFIG)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_condense_falls_back_when_the_rewrite_is_empty(_engine: AsyncEngine) -> None:
+    """An empty rewrite must not become the question — the retriever would search ""."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(
+        responses=[CondensedQuestion(is_follow_up=True, standalone_question="   ")]
+    )
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    result = await nodes["condense"](_condense_state("what about a min one?"), _CONFIG)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_condense_is_not_handed_a_conversation_to_continue(
+    _engine: AsyncEngine,
+) -> None:
+    """Prior turns must arrive as quoted transcript, not as chat messages.
+
+    Standing the model at the end of a real Human/AI exchange is what let its
+    reply-as-the-assistant instinct override the instruction to rewrite. The whole
+    history must therefore reach it inside a single message.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured: list[Any] = []
+
+    class CapturingStructured(FakeChatModel):
+        def with_structured_output(self, *a: Any, **k: Any) -> Any:  # type: ignore[override]
+            runnable = super().with_structured_output(*a, **k)
+
+            async def _ainvoke(msgs: Any, *_a: Any, **_k: Any) -> Any:
+                captured.extend(msgs)
+                return self._next()
+
+            runnable.ainvoke = _ainvoke  # type: ignore[method-assign]
+            return runnable
+
+    model = CapturingStructured(
+        responses=[CondensedQuestion(is_follow_up=True, standalone_question="x")]
+    )
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    await nodes["condense"](_condense_state("what about a min one?"), _CONFIG)
+
+    # Exactly two messages: the system prompt and one user message holding everything.
+    assert len(captured) == 2, [type(m).__name__ for m in captured]
+    payload = _message_text(captured[1])
+    assert "User: what is a heap?" in payload
+    assert "Assistant: A heap is a tree-based structure." in payload
+    assert "Latest message: what about a min one?" in payload
 
 
 # ---------------------------------------------------------------------------
@@ -494,24 +574,60 @@ async def test_generate_returns_ai_message(_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_does_not_mark_its_message_as_final_answer(_engine: AsyncEngine) -> None:
-    """The agent's own AIMessage must never carry the final-answer marker — it may be
-    a direct answer written from the model's own knowledge, which is exactly what must
-    not reach the user as a grounded answer."""
+async def test_agent_does_not_mark_a_draft_that_still_needs_generate(
+    _engine: AsyncEngine,
+) -> None:
+    """An agent draft that will still pass through generate must NOT be marked.
+
+    Marking it would persist two final answers for one turn, which get_detail
+    surfaces as two assistant bubbles for a single question. Here context is
+    non-empty (a document was read), so generate runs and owns the answer.
+    """
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    model = FakeChatModel(responses=[AIMessage("I already know what a weak entity is.")])
+    model = FakeChatModel(responses=[AIMessage("Draft summary of the document.")])
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
     nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
 
     state: dict[str, Any] = {
-        "messages": [HumanMessage("explain weak entity")],
-        "question": "explain weak entity",
-        "context": [],
+        "messages": [HumanMessage("summarise lecture 1")],
+        "question": "summarise lecture 1",
+        "context": [{"chunk_id": "c1", "content": "doc text"}],
         "retry_count": 0,
     }
     result = await nodes["agent"](state, _CONFIG)
 
     assert not result["messages"][-1].additional_kwargs.get(FINAL_ANSWER_KEY)
+
+
+@pytest.mark.asyncio
+async def test_agent_marks_a_conversational_reply_as_the_final_answer(
+    _engine: AsyncEngine,
+) -> None:
+    """A greeting ends the turn at the agent, so its reply IS the turn's answer.
+
+    Without the marker the SSE layer would emit no token (leaving the bubble blank,
+    and deleting the new conversation row as an orphan) and get_detail would hide
+    the greeting from replayed history.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[AIMessage("Hello! How can I help with your notes?")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("hi")],
+        "question": "hi",
+        "context": [],
+        "searched": False,
+        "retry_count": 0,
+    }
+    result = await nodes["agent"](state, _CONFIG)
+
+    marked = result["messages"][-1]
+    assert marked.additional_kwargs.get(FINAL_ANSWER_KEY) is True
+    # Explicitly empty, not absent: absent means "answered before citations were
+    # persisted" to get_detail's legacy path, which would show stale sources.
+    assert marked.additional_kwargs.get(CITATIONS_KEY) == []
 
 
 @pytest.mark.asyncio
@@ -584,15 +700,14 @@ async def test_recent_drops_earlier_agent_direct_answers(_engine: AsyncEngine) -
 
 
 @pytest.mark.asyncio
-async def test_recent_keeps_the_agents_answer_for_the_turn_it_belongs_to(
+async def test_recent_keeps_a_marked_conversational_reply(
     _engine: AsyncEngine,
 ) -> None:
-    """The direct-answer path (greetings) depends on the agent's message.
+    """A conversational reply is a real answer, so it stays in replayed history.
 
-    generate runs straight after agent with empty context, and GENERATE_SYSTEM
-    tells it to refuse when context is empty — the agent's reply sitting last in
-    history is the only thing that lets a greeting produce a greeting instead of
-    "I couldn't find this in your notes". So the window's last message is exempt.
+    It survives on its own merits — the final-answer marker the agent stamps on it —
+    rather than via any positional exemption. Without this, a greeting would vanish
+    from the history that later turns are conditioned on.
     """
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -607,9 +722,11 @@ async def test_recent_keeps_the_agents_answer_for_the_turn_it_belongs_to(
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
     nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
 
+    greeting = AIMessage("Hello! How can I help?")
+    greeting.additional_kwargs[FINAL_ANSWER_KEY] = True  # stamped by the agent node
     state: dict[str, Any] = {
-        "messages": [HumanMessage("hi"), AIMessage("Hello! How can I help?")],
-        "question": "hi",
+        "messages": [HumanMessage("hi"), greeting, HumanMessage("what is a heap?")],
+        "question": "what is a heap?",
         "context": [],
         "retry_count": 0,
     }
@@ -678,9 +795,51 @@ def test_route_after_agent_to_tools() -> None:
     assert route_after_agent(state) == "tools"  # type: ignore[arg-type]
 
 
-def test_route_after_agent_to_generate() -> None:
-    state: dict[str, Any] = {"messages": [AIMessage("direct answer")]}
+def test_route_after_agent_to_generate_when_context_is_citable() -> None:
+    """An agent draft written after reading a document must still pass through
+    generate — that is what turns it into a cited answer."""
+    state: dict[str, Any] = {
+        "messages": [AIMessage("draft summary")],
+        "context": [{"chunk_id": "c1", "content": "doc text"}],
+    }
     assert route_after_agent(state) == "generate"  # type: ignore[arg-type]
+
+
+def test_route_after_agent_to_generate_when_search_found_nothing() -> None:
+    """The anti-hallucination guarantee: once the notes have been searched and come
+    back empty, the turn must reach generate's refusal rather than ending on whatever
+    the agent decided to say. Empty context alone cannot distinguish this from a
+    greeting — `searched` is what separates them."""
+    state: dict[str, Any] = {
+        "messages": [AIMessage("I think a weak entity is...")],
+        "context": [],
+        "searched": True,
+    }
+    assert route_after_agent(state) == "generate"  # type: ignore[arg-type]
+
+
+def test_route_after_agent_ends_turn_on_conversational_reply() -> None:
+    """A greeting needs no grounding pass. Routing it to generate is what produced
+    "I couldn't find this in your notes." in reply to "hi": generate has empty context
+    and its contract tells it to refuse."""
+    state: dict[str, Any] = {
+        "messages": [AIMessage("Hello! How can I help?")],
+        "context": [],
+        "searched": False,
+    }
+    assert route_after_agent(state) == "end"  # type: ignore[arg-type]
+
+
+def test_route_after_agent_ends_turn_after_listing_documents() -> None:
+    """"What notes do I have?" runs list_documents, which populates no context because
+    a file listing has nothing citable. Before the conversational route existed this
+    reached generate and was refused, exactly like a greeting."""
+    state: dict[str, Any] = {
+        "messages": [AIMessage("You have 3 documents: ...")],
+        "context": [],
+        "searched": False,  # list_documents is not a search
+    }
+    assert route_after_agent(state) == "end"  # type: ignore[arg-type]
 
 
 def test_route_after_tools_grade_for_retrieve() -> None:
