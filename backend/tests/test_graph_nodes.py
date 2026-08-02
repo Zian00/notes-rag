@@ -543,6 +543,83 @@ async def test_generate_with_empty_context_prompted_with_no_results(_engine: Asy
 
 
 @pytest.mark.asyncio
+async def test_recent_drops_earlier_agent_direct_answers(_engine: AsyncEngine) -> None:
+    """An agent direct answer from an EARLIER turn must not be replayed as history.
+
+    It was written from the model's own knowledge (ungrounded) and is never shown
+    to the user, so feeding it back invites later answers to lean on it. Only the
+    marked `generate` answers are real conversation history.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("new answer")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    grounded = AIMessage("Grounded answer from notes.")
+    grounded.additional_kwargs[FINAL_ANSWER_KEY] = True
+    state: dict[str, Any] = {
+        "messages": [
+            HumanMessage("first question"),
+            AIMessage("Ungrounded chatter the agent invented."),  # agent, untagged
+            grounded,
+            HumanMessage("second question"),
+        ],
+        "question": "second question",
+        "context": [],
+        "retry_count": 0,
+    }
+    await nodes["generate"](state, _CONFIG)
+
+    full_text = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
+    assert "Ungrounded chatter" not in full_text
+    assert "Grounded answer from notes." in full_text
+
+
+@pytest.mark.asyncio
+async def test_recent_keeps_the_agents_answer_for_the_turn_it_belongs_to(
+    _engine: AsyncEngine,
+) -> None:
+    """The direct-answer path (greetings) depends on the agent's message.
+
+    generate runs straight after agent with empty context, and GENERATE_SYSTEM
+    tells it to refuse when context is empty — the agent's reply sitting last in
+    history is the only thing that lets a greeting produce a greeting instead of
+    "I couldn't find this in your notes". So the window's last message is exempt.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("Hello!")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("hi"), AIMessage("Hello! How can I help?")],
+        "question": "hi",
+        "context": [],
+        "retry_count": 0,
+    }
+    await nodes["generate"](state, _CONFIG)
+
+    full_text = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
+    assert "Hello! How can I help?" in full_text
+
+
+@pytest.mark.asyncio
 async def test_recent_never_orphans_a_tool_message(_engine: AsyncEngine) -> None:
     """A naive last-N history trim can land between a tool-calling AIMessage and
     its ToolMessage response, producing a message list some providers (OpenAI)

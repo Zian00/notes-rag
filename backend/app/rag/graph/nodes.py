@@ -89,11 +89,36 @@ def make_nodes(
         production 400s after switching providers — Gemini tolerated it).
         Dropping leading ToolMessage(s) left dangling by the cut never removes
         more than one AIMessage's worth of already-old tool results.
+
+        Agent direct answers from earlier turns are also dropped. When the agent
+        judges no tool is needed it writes an answer from the model's own
+        knowledge — ungrounded, never shown to the user (get_detail surfaces only
+        FINAL_ANSWER_KEY-marked messages), and replaying it as history invites
+        later answers to lean on it. Such a message is an AIMessage with neither
+        tool_calls nor that marker.
+
+        The window's LAST message is exempt: on the direct-answer path generate
+        runs immediately after agent with empty context, and GENERATE_SYSTEM tells
+        it to refuse when context is empty — the agent's reply sitting last is the
+        only thing that lets a greeting answer a greeting rather than reply
+        "I couldn't find this in your notes".
         """
         trimmed = state["messages"][-history_limit:]
-        while trimmed and isinstance(trimmed[0], ToolMessage):
-            trimmed = trimmed[1:]
-        return trimmed
+
+        def _is_stale_agent_answer(msg: Any, index: int) -> bool:
+            if index == len(trimmed) - 1:  # current turn's own reply — keep
+                return False
+            if not isinstance(msg, AIMessage):
+                return False
+            # tool_calls messages must survive: their ToolMessage depends on them.
+            if msg.tool_calls:
+                return False
+            return not msg.additional_kwargs.get(FINAL_ANSWER_KEY)
+
+        kept = [m for i, m in enumerate(trimmed) if not _is_stale_agent_answer(m, i)]
+        while kept and isinstance(kept[0], ToolMessage):
+            kept = kept[1:]
+        return kept
 
     async def condense(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Resolve follow-up references in the latest question using prior turns.
