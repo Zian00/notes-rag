@@ -70,7 +70,10 @@ export function ChatPage() {
           id: crypto.randomUUID(),
           role: message.role as ChatMessage["role"],
           content: message.content,
-        })),
+          // Null for conversations answered before citations began being persisted
+          // onto the answer message — those sources were never stored.
+          citations: message.citations ?? undefined,
+        }))
     )
     seededConversationIdRef.current = conversationId
   }, [conversationId, conversationQuery.data, seed])
@@ -80,12 +83,17 @@ export function ChatPage() {
   // created) while the just-streamed live messages are already sitting in `messages` —
   // without this guard the loading skeleton would briefly replace real, already-visible
   // content purely because a redundant history fetch is in flight.
-  const isLoadingHistory = Boolean(conversationId) && conversationQuery.isLoading && messages.length === 0
+  const isLoadingHistory =
+    Boolean(conversationId) && conversationQuery.isLoading && messages.length === 0
 
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <MessageList messages={messages} isStreaming={isStreaming} isLoadingHistory={isLoadingHistory} />
+        <MessageList
+          messages={messages}
+          isStreaming={isStreaming}
+          isLoadingHistory={isLoadingHistory}
+        />
       </div>
       <ChatInput isStreaming={isStreaming} onSend={send} onStop={stop} />
     </div>

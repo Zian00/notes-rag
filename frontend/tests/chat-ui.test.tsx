@@ -154,6 +154,34 @@ describe("ChatPage", () => {
     expect(await screen.findByText("A hash map is a key-value data structure.")).toBeInTheDocument()
   })
 
+  it("restores persisted citations when reopening a conversation", async () => {
+    mockAuthed()
+    const citation: Citation = { chunk_id: "c1", filename: "notes.pdf", title: "Notes" }
+    server.use(
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () =>
+        HttpResponse.json({
+          ...convo1Detail,
+          messages: [
+            { role: "user", content: "What is a hash map?" },
+            {
+              role: "assistant",
+              content: "A hash map is a key-value data structure [1].",
+              citations: [citation],
+            },
+          ],
+        })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderApp([`/chat/${convo1.id}`])
+
+    // Sources come back from persisted history, not from a live SSE stream.
+    const sourcesToggle = await screen.findByRole("button", { name: /sources/i })
+    await user.click(sourcesToggle)
+    expect(await screen.findByText("Notes")).toBeInTheDocument()
+  })
+
   it("new chat clears the thread and navigates to /chat", async () => {
     mockAuthed()
     mockStreamChat.mockImplementation(

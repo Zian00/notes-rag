@@ -19,6 +19,7 @@ from app.rag.graph.nodes import (
     route_after_agent,
     route_after_tools,
 )
+from app.rag.graph.state import FINAL_ANSWER_KEY
 from app.rag.graph.tools import build_tools
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -487,6 +488,30 @@ async def test_generate_returns_ai_message(_engine: AsyncEngine) -> None:
     ai_msg = result["messages"][-1]
     assert isinstance(ai_msg, AIMessage)
     assert "answer" in ai_msg.content.lower()
+    # Marked so replayed history can tell this grounded answer apart from the
+    # agent node's intermediate messages (see FINAL_ANSWER_KEY in state.py).
+    assert ai_msg.additional_kwargs.get(FINAL_ANSWER_KEY) is True
+
+
+@pytest.mark.asyncio
+async def test_agent_does_not_mark_its_message_as_final_answer(_engine: AsyncEngine) -> None:
+    """The agent's own AIMessage must never carry the final-answer marker — it may be
+    a direct answer written from the model's own knowledge, which is exactly what must
+    not reach the user as a grounded answer."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    model = FakeChatModel(responses=[AIMessage("I already know what a weak entity is.")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=20, max_retries=2)
+
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("explain weak entity")],
+        "question": "explain weak entity",
+        "context": [],
+        "retry_count": 0,
+    }
+    result = await nodes["agent"](state, _CONFIG)
+
+    assert not result["messages"][-1].additional_kwargs.get(FINAL_ANSWER_KEY)
 
 
 @pytest.mark.asyncio
@@ -515,6 +540,51 @@ async def test_generate_with_empty_context_prompted_with_no_results(_engine: Asy
 
     full_text = " ".join(str(getattr(m, "content", "")) for m in captured_msgs)
     assert "NO RESULTS" in full_text
+
+
+@pytest.mark.asyncio
+async def test_recent_never_orphans_a_tool_message(_engine: AsyncEngine) -> None:
+    """A naive last-N history trim can land between a tool-calling AIMessage and
+    its ToolMessage response, producing a message list some providers (OpenAI)
+    reject outright with a 400 ("messages with role 'tool' must be a response
+    to a preceding message with 'tool_calls'") — confirmed in production after
+    switching from Gemini (which tolerated it) to OpenAI. history_limit=2 forces
+    the cut to land exactly inside the pair below; the trimmed messages must
+    never start with (or contain) a ToolMessage lacking its preceding AIMessage."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    captured_msgs: list[Any] = []
+
+    class CapturingFake(FakeChatModel):
+        async def _agenerate(self, messages: Any, **kw: Any) -> Any:  # type: ignore[override]
+            captured_msgs.extend(messages)
+            return await super()._agenerate(messages, **kw)
+
+    model = CapturingFake(responses=[AIMessage("answer")])
+    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
+    nodes = make_nodes(model, tools, history_limit=2, max_retries=2)
+
+    tool_call = AIMessage(
+        content="", tool_calls=[{"name": "retrieve_notes", "args": {"query": "x"}, "id": "tc1"}]
+    )
+    tool_result = ToolMessage(content="ctx", tool_call_id="tc1", name="retrieve_notes")
+    # 4 messages, history_limit=2 → naive slice keeps only [tool_result, q2],
+    # orphaning tool_result from its preceding tool_call.
+    state: dict[str, Any] = {
+        "messages": [HumanMessage("q1"), tool_call, tool_result, HumanMessage("q2")],
+        "question": "q2",
+        "context": [],
+        "retry_count": 0,
+    }
+    await nodes["generate"](state, _CONFIG)
+
+    for i, m in enumerate(captured_msgs):
+        if isinstance(m, ToolMessage):
+            preceding = captured_msgs[i - 1] if i > 0 else None
+            assert isinstance(preceding, AIMessage) and preceding.tool_calls, (
+                f"Orphaned ToolMessage at index {i}: "
+                f"{[type(x).__name__ for x in captured_msgs]}"
+            )
 
 
 # ---------------------------------------------------------------------------

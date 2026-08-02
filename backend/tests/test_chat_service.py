@@ -34,7 +34,7 @@ from app.db.repositories.user import UserRepository
 from app.rag.graph import build_rag_graph
 from app.rag.graph.nodes import Grade
 from app.services.chat import ChatService, ConversationNotFound
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -525,6 +525,115 @@ async def test_get_detail_no_synthetic_messages_after_rewrite_linear(
 
     assert len(user_msgs) == 1, f"Expected exactly 1 user message, got: {user_msgs}"
     assert user_msgs[0]["content"] == "what is a heap?"
+
+
+@pytest.mark.asyncio
+async def test_get_detail_excludes_agent_node_answer(_engine: AsyncEngine) -> None:
+    """Replayed history must show only the grounded `generate` answer.
+
+    Regression test: the agent node can answer directly from the model's own
+    knowledge (no tool call), and that AIMessage lands in checkpointer state
+    alongside generate's. Live SSE only streams generate's tokens, so such an
+    answer was invisible live but reappeared as a second assistant bubble on
+    reload — presenting ungrounded text as though it were sourced from notes.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    # agent answers directly (content, no tool_calls) → routes straight to generate.
+    model = FakeChatModel(
+        responses=[
+            AIMessage("A weak entity cannot be identified by its own attributes."),
+            AIMessage("I couldn't find this in your notes."),
+        ]
+    )
+    svc = _build_service(model, maker)
+
+    frames = await _collect_frames(svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="explain weak entity",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+
+    detail = await svc.get_detail(convo_id, user.id)
+    assistant_contents = [m["content"] for m in detail["messages"] if m["role"] == "assistant"]
+
+    assert assistant_contents == ["I couldn't find this in your notes."], (
+        f"Expected only generate's grounded answer, got: {assistant_contents}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_detail_returns_persisted_citations(_engine: AsyncEngine) -> None:
+    """Citations must survive reopening a conversation.
+
+    They're delivered live over SSE, but that frame is transient — the answer
+    message carries its own copy so replayed history can show sources too.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        await _seed_doc(s, user.id)
+
+    model = FakeChatModel(
+        responses=[
+            _retrieve_call("heap"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("A heap is a tree-based structure [1]."),
+        ]
+    )
+    svc = _build_service(model, maker)
+
+    frames = await _collect_frames(svc.stream_answer(
+        user_id=user.id,
+        conversation_id=None,
+        question="what is a heap?",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames if e == "meta")["conversation_id"])
+    live_citations = next(d for e, d in frames if e == "citations")
+    assert live_citations, "precondition: this turn should have streamed citations live"
+
+    detail = await svc.get_detail(convo_id, user.id)
+    assistant = next(m for m in detail["messages"] if m["role"] == "assistant")
+
+    # Replayed history must carry the same sources the live stream sent.
+    assert assistant["citations"] == live_citations
+
+
+@pytest.mark.asyncio
+async def test_get_detail_legacy_thread_without_markers_still_shows_answers(
+    _engine: AsyncEngine,
+) -> None:
+    """Threads checkpointed before FINAL_ANSWER_KEY existed carry no markers; those
+    must fall back to showing every AIMessage rather than replaying with no replies."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        from app.db.repositories.conversation import ConversationRepository
+
+        convo = await ConversationRepository(s).create(user_id=user.id, title="legacy")
+        await s.commit()
+        convo_id = convo.id
+
+    class _StubState:
+        def __init__(self, values: dict[str, Any]) -> None:
+            self.values = values
+
+    class _StubGraph:
+        """Stands in for the compiled graph: get_detail only ever calls aget_state."""
+
+        async def aget_state(self, _config: dict[str, Any]) -> _StubState:
+            return _StubState(
+                {"messages": [HumanMessage("old question"), AIMessage("old answer")]}
+            )
+
+    svc = ChatService(_StubGraph(), maker)
+    detail = await svc.get_detail(convo_id, user.id)
+
+    assert [m["content"] for m in detail["messages"]] == ["old question", "old answer"]
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,10 @@ AGENT_SYSTEM = (
     "To answer questions or write topic summaries, call `retrieve_notes`. "
     "To list what notes exist or resolve a named document, call `list_documents`. "
     "To summarise a whole document, call `list_documents` then `get_document_content`. "
-    "If the user's message needs no notes (greetings, meta questions about this chat),"
-    " answer directly."
+    "Answer directly ONLY if the message is a greeting, a thanks, or a question about "
+    "this conversation itself. For ANY question about a topic, concept, or term — even "
+    "one you already know the answer to — you MUST call a tool first. Never answer a "
+    "subject-matter question from your own knowledge."
 )
 
 # System prompt for the generate node: strict anti-hallucination grounding.

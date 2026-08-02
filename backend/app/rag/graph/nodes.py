@@ -24,8 +24,9 @@ from app.rag.graph.prompts import (
     GRADE_SYSTEM,
     REWRITE_SYSTEM,
 )
-from app.rag.graph.state import RagState
+from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, RagState
 from app.rag.graph.tools import format_chunks_for_llm
+from app.services.citations import to_citations
 
 # Tools whose results populate ``context`` (used for grounding + citations).
 _CONTEXT_TOOLS = {"retrieve_notes", "get_document_content"}
@@ -79,8 +80,20 @@ def make_nodes(
     grader = model.with_structured_output(Grade)
 
     def _recent(state: RagState) -> list[Any]:
-        """Trim message history to the last history_limit messages."""
-        return state["messages"][-history_limit:]
+        """Trim message history to the last history_limit messages.
+
+        A naive last-N slice can land inside an AIMessage(tool_calls) +
+        ToolMessage pairing, leaving an orphaned ToolMessage at the front with
+        no preceding tool-calling message in the trimmed window. OpenAI
+        strictly rejects any message list with such an orphan (confirmed via
+        production 400s after switching providers — Gemini tolerated it).
+        Dropping leading ToolMessage(s) left dangling by the cut never removes
+        more than one AIMessage's worth of already-old tool results.
+        """
+        trimmed = state["messages"][-history_limit:]
+        while trimmed and isinstance(trimmed[0], ToolMessage):
+            trimmed = trimmed[1:]
+        return trimmed
 
     async def condense(state: RagState, config: RunnableConfig) -> dict[str, Any]:
         """Resolve follow-up references in the latest question using prior turns.
@@ -203,6 +216,10 @@ def make_nodes(
         The generate prompt strictly forbids using knowledge outside the provided context
         — the anti-hallucination contract. If context is empty the model is told "NO
         RESULTS." and must reply with the refusal phrase.
+
+        The reply is marked with FINAL_ANSWER_KEY so replayed conversation history can
+        tell this grounded answer apart from `agent`'s intermediate messages (see the
+        constant's docstring in state.py).
         """
         ctx = format_chunks_for_llm(state.get("context", []))
         resp = await model.ainvoke(
@@ -213,6 +230,10 @@ def make_nodes(
             ],
             config,
         )
+        resp.additional_kwargs[FINAL_ANSWER_KEY] = True
+        # Derived from the same context stream_answer's live SSE citations frame uses,
+        # via the same shared helper — the two can't disagree.
+        resp.additional_kwargs[CITATIONS_KEY] = to_citations(state.get("context", []))
         return {"messages": [resp]}
 
     return {

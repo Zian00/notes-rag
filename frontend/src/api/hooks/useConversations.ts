@@ -1,4 +1,9 @@
-import { useMutation, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import {
+  useMutation,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { $api, fetchClient } from "@/api/client"
 import { DeleteError } from "@/api/deleteError"
 import type { components } from "@/api/schema"
@@ -16,6 +21,16 @@ export function getConversationsListKey() {
   return $api.queryOptions("get", "/conversations").queryKey
 }
 
+// Same rationale as getConversationsListKey, for a single conversation's detail
+// (history) query. Needed by useChat: finishing a turn changes that conversation's
+// server-side history, so its cached detail must be invalidated or a later
+// navigation back re-seeds the chat from pre-question history.
+export function getConversationDetailKey(id: string) {
+  return $api.queryOptions("get", "/conversations/{conversation_id}", {
+    params: { path: { conversation_id: id } },
+  }).queryKey
+}
+
 // Lists the current user's conversations, newest-first (backend's ordering).
 // Thin wrapper over openapi-react-query so callers don't need to know the call shape.
 export function useConversations(): UseQueryResult<ConversationResponse[], unknown> {
@@ -25,12 +40,14 @@ export function useConversations(): UseQueryResult<ConversationResponse[], unkno
 // Fetches one conversation's full history (messages included). Disabled when `id`
 // is undefined — a brand-new chat has no persisted history to seed from, and
 // openapi-fetch's path param can't be omitted, so there's nothing valid to request.
-export function useConversation(id: string | undefined): UseQueryResult<ConversationDetail, unknown> {
+export function useConversation(
+  id: string | undefined
+): UseQueryResult<ConversationDetail, unknown> {
   return $api.useQuery(
     "get",
     "/conversations/{conversation_id}",
     { params: { path: { conversation_id: id as string } } },
-    { enabled: Boolean(id) },
+    { enabled: Boolean(id) }
   )
 }
 

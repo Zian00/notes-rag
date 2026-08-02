@@ -1,6 +1,6 @@
 """Tests for the shared citation-numbering helper.
 
-format_chunks_for_llm (LLM-facing) and ChatService._to_citations (client-facing)
+format_chunks_for_llm (LLM-facing) and to_citations (client-facing)
 must agree on which chunks represent the "same source" so an LLM-written "[n]"
 marker always corresponds to citations[n-1] — these tests prove the shared rule
 they both build on, and that the two functions actually agree given the same input.
@@ -9,8 +9,7 @@ they both build on, and that the two functions actually agree given the same inp
 from typing import Any
 
 from app.rag.graph.tools import format_chunks_for_llm
-from app.services.chat import _to_citations
-from app.services.citations import dedupe_chunks_by_document
+from app.services.citations import dedupe_chunks_by_document, to_citations
 
 
 def _chunk(document_id: str, **overrides: Any) -> dict[str, Any]:
@@ -44,11 +43,11 @@ def test_dedupe_chunks_by_document_empty() -> None:
 def test_llm_numbering_and_client_citations_agree() -> None:
     """The core guarantee this whole design rests on: whatever number
     format_chunks_for_llm printed next to a chunk is exactly the 1-based position
-    of that chunk's document in _to_citations' output."""
+    of that chunk's document in to_citations' output."""
     chunks = [_chunk("doc-a"), _chunk("doc-b"), _chunk("doc-a"), _chunk("doc-c")]
 
     rendered = format_chunks_for_llm(chunks)
-    citations = _to_citations(chunks)
+    citations = to_citations(chunks)
 
     assert [c["document_id"] for c in citations] == ["doc-a", "doc-b", "doc-c"]
     assert "[1] Title doc-a" in rendered

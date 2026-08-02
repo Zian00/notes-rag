@@ -288,6 +288,23 @@ export interface components {
             /** Score */
             score: number;
         };
+        /** Citation */
+        Citation: {
+            /** Chunk Id */
+            chunk_id?: string | null;
+            /** Document Id */
+            document_id?: string | null;
+            /** Filename */
+            filename?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Page Number */
+            page_number?: number | null;
+            /** Section */
+            section?: string | null;
+            /** Score */
+            score?: number | null;
+        };
         /** ConversationDetail */
         ConversationDetail: {
             /**
@@ -422,6 +439,8 @@ export interface components {
             role: string;
             /** Content */
             content: string;
+            /** Citations */
+            citations?: components["schemas"]["Citation"][] | null;
         };
         /** RegisterRequest */
         RegisterRequest: {

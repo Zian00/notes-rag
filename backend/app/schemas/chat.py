@@ -36,6 +36,9 @@ class ConversationResponse(BaseModel):
 class MessageResponse(BaseModel):
     role: str
     content: str
+    # Assistant turns only, and only for threads answered after citations began being
+    # persisted onto the answer message — null everywhere else.
+    citations: list[Citation] | None = None
 
 
 class ConversationDetail(ConversationResponse):

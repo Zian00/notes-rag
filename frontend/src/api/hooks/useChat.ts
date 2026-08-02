@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { streamChat, type Citation } from "@/api/chatStream"
-import { getConversationsListKey } from "@/api/hooks/useConversations"
+import { getConversationDetailKey, getConversationsListKey } from "@/api/hooks/useConversations"
 
 // UI-facing message shape for the live chat list. Distinct from the backend's
 // MessageResponse (role/content only) because the UI also needs a stable React
@@ -265,6 +265,18 @@ export function useChat(options?: UseChatOptions): UseChatResult {
         // A new chat now exists, or an existing one just moved to the top of the
         // list (updated_at bumped) — refresh the sidebar's list query either way.
         void queryClient.invalidateQueries({ queryKey: conversationsListKey })
+        // This turn also changed the conversation's own persisted history. Without
+        // invalidating its detail query, the cached (pre-question) history is served
+        // for staleTime — so navigating away and back re-seeds the chat missing the
+        // turn that just happened, until a full page reload clears the cache.
+        // ChatPage is observing this query right now, so invalidating refetches
+        // immediately and the cache is already correct by the time the user returns.
+        const activeConversationId = activeConversationIdRef.current
+        if (activeConversationId) {
+          void queryClient.invalidateQueries({
+            queryKey: getConversationDetailKey(activeConversationId),
+          })
+        }
       }
     },
     [isStreaming, onConversationCreated, queryClient, conversationsListKey]

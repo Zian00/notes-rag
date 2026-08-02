@@ -17,7 +17,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.repositories.conversation import ConversationRepository
-from app.services.citations import dedupe_chunks_by_document
+from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY
+from app.services.citations import to_citations
 
 # Maximum characters used as the conversation title (derived from first question).
 _TITLE_MAX = 120
@@ -32,19 +33,6 @@ def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def _to_citations(context: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Trim context dicts to the citation-safe subset of keys for the client.
-
-    Deduped by document_id via the shared dedupe_chunks_by_document rule, so this
-    array's ordering always agrees with the citation numbers
-    format_chunks_for_llm showed the LLM — an inline "[n]" marker in the answer
-    always corresponds to citations[n-1].
-    """
-    return [
-        {k: c.get(k) for k in
-         ("chunk_id", "document_id", "filename", "title", "page_number", "section", "score")}
-        for c in dedupe_chunks_by_document(context)
-    ]
 
 
 class ChatService:
@@ -135,7 +123,7 @@ class ChatService:
 
             # After streaming, fetch the final state to extract grounding sources.
             state = await self._graph.aget_state(config)
-            yield _sse("citations", _to_citations(state.values.get("context", [])))
+            yield _sse("citations", to_citations(state.values.get("context", [])))
 
             # Bump updated_at so this conversation rises to the top of the user's list.
             async with self._sm() as s:
@@ -176,6 +164,13 @@ class ChatService:
         not conversation turns the user would recognise.  Per-message citations are also
         omitted here — only the latest-turn context is persisted in state; citations are
         delivered live in the SSE stream.
+
+        Only FINAL_ANSWER_KEY-marked AIMessages count as assistant turns: `agent` also
+        writes AIMessages into state (tool-call decisions, or direct answers written from
+        the model's own knowledge), and replaying those as answers would surface
+        ungrounded text that live streaming never showed.  Threads checkpointed before
+        that marker existed have none, so they fall back to showing every AIMessage —
+        without it their history would replay with no assistant replies at all.
         """
         async with self._sm() as s:
             convo = await ConversationRepository(s).get_for_user(conversation_id, user_id)
@@ -185,12 +180,24 @@ class ChatService:
         state = await self._graph.aget_state(
             {"configurable": {"thread_id": str(conversation_id)}}
         )
-        messages: list[dict[str, str]] = []
-        for m in state.values.get("messages", []):
+        raw_messages = state.values.get("messages", [])
+        is_legacy_thread = not any(
+            isinstance(m, AIMessage) and m.additional_kwargs.get(FINAL_ANSWER_KEY)
+            for m in raw_messages
+        )
+        messages: list[dict[str, Any]] = []
+        for m in raw_messages:
             # content is str | list; we only include non-empty string content.
             content = m.content if isinstance(m.content, str) else ""
             if isinstance(m, AIMessage) and content:
-                messages.append({"role": "assistant", "content": content})
+                if is_legacy_thread or m.additional_kwargs.get(FINAL_ANSWER_KEY):
+                    messages.append({
+                        "role": "assistant",
+                        "content": content,
+                        # Absent on pre-CITATIONS_KEY threads — their sources were
+                        # never stored, so there is nothing to recover.
+                        "citations": m.additional_kwargs.get(CITATIONS_KEY),
+                    })
             elif isinstance(m, HumanMessage) and content:
                 messages.append({"role": "user", "content": content})
         return {"conversation": convo, "messages": messages}
