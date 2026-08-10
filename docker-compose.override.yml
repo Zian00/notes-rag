@@ -1,0 +1,34 @@
+# Dev-only overrides — Compose auto-merges this on top of docker-compose.yml for
+# every `docker compose` command (no -f needed). Gives the API a hot-reload loop:
+# edit a .py on the host and uvicorn restarts in-place, no image rebuild.
+#
+# NOT used in production: the deploy uses docker-compose.yml alone (or an explicit
+# `-f docker-compose.yml`), so the baked-image, no-reload behaviour is unchanged there.
+services:
+  backend:
+    volumes:
+      # Live source: host ./backend shadows the image's baked-in /app copy, so
+      # saved edits are visible to the container immediately.
+      - ./backend:/app
+      # Anonymous volume preserves the image's Linux venv at /app/.venv — without
+      # this, the ./backend bind-mount above would hide it and `uv run` would break
+      # (the host has no Linux venv). Recreate this volume after dependency changes:
+      #   docker compose down && docker volume rm notes-rag_backend_venv  (or prune)
+      - backend_venv:/app/.venv
+    environment:
+      # inotify events don't cross the Docker Desktop (Windows/WSL2) bind-mount
+      # boundary, so watchfiles would never see edits. Polling is slower but is the
+      # only reliable trigger for a Windows-hosted source tree.
+      WATCHFILES_FORCE_POLLING: "true"
+    # Same startup chain as the image CMD (migrate → apply procrastinate schema),
+    # then uvicorn with --reload appended for the dev loop.
+    command:
+      - sh
+      - -c
+      - >-
+        uv run --no-sync alembic upgrade head
+        && (uv run --no-sync python -m procrastinate --app app.jobs.ingestion_tasks.app schema --apply || true)
+        && uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  backend_venv:
