@@ -1,7 +1,7 @@
 # Markdown Rendering + Citation Fidelity — Design
 
 **Date:** 2026-07-31
-**Status:** Draft, awaiting review
+**Status:** Implemented — shipped 2026-08-10 (markdown/citations in `1888449` + `85e3ad5`; code-review follow-ups in `637f2f3`). See §10.
 **Scope:** `frontend/src/components/chat/MessageBubble.tsx`, `frontend/src/components/chat/Citations.tsx`, two new custom remark/rehype plugins, `frontend/package.json`; `backend/app/rag/graph/tools.py`, `backend/app/services/chat.py`, a new shared citation-numbering helper
 **Continues:** Chat UX backlog item 1 (`docs/superpowers/plans/2026-07-30-chat-ux-backlog.md`) — and, since grilling it surfaced a blocking dependency, partially closes the retrieval-quality roadmap's "generation correctness" item (the **citation-fidelity** slice only)
 
@@ -105,4 +105,12 @@ A second custom remark/rehype plugin scans text nodes for `\[(\d+)\]`-shaped sub
 
 ## 9. Roadmap context
 
-Closes chat-ux-backlog item 1 (markdown rendering) and the citation-fidelity slice of the "generation correctness" roadmap item. Still open: chat-ux-backlog item 2 (token-by-token streaming), and the rest of "generation correctness" (hallucination-checking, the `get_document_content` title/filename mislabeling bug).
+Closes chat-ux-backlog item 1 (markdown rendering) and the citation-fidelity slice of the "generation correctness" roadmap item. Chat-ux-backlog item 2 (token-by-token streaming) has since been addressed separately — real per-token SSE plus a client-side typewriter reveal buffer and a "Thinking" indicator for the latency-to-first-token gap (commit `9b1c033`). Still open: the rest of "generation correctness" (hallucination-checking, the `get_document_content` title/filename mislabeling bug).
+
+## 10. Implementation notes (2026-08-10)
+
+Shipped as designed. Notable specifics:
+
+- **Shared numbering helper:** `dedupe_chunks_by_document` landed in `backend/app/services/citations.py` (§5.1's module was TBD); both `format_chunks_for_llm` (`tools.py`) and `to_citations` call it, so chunk-level and document-level numbering can't drift.
+- **Frontend split into dedicated files:** the two AST transforms are `frontend/src/lib/rehypeStreamingCursor.ts` (§6.6) and `frontend/src/lib/rehypeCitationMarkers.ts` (§6.7); markdown component overrides live in `useMarkdownComponents.tsx`; the cursor itself is `StreamingCursor.tsx`.
+- **Tests:** backend numbering fidelity in `backend/tests/test_citations.py` + `test_graph_tools.py`; frontend markdown/link/image/citation-marker behaviors extended `frontend/tests/chat-ui.test.tsx` as planned.

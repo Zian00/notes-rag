@@ -1,7 +1,7 @@
 # Smarter Query Rewrite — Design
 
 **Date:** 2026-07-30
-**Status:** Draft, awaiting review
+**Status:** Implemented — shipped 2026-08-10 (commit `6f3ad50`; code-review follow-ups in `637f2f3`). See §10.
 **Scope:** `backend/app/rag/graph/state.py`, `backend/app/rag/graph/nodes.py`, `backend/app/rag/graph/prompts.py`, `backend/app/rag/graph/builder.py`, associated tests
 **Continues:** Retrieval-quality roadmap item 2 (reranking and hybrid search shipped already — see `docs/superpowers/specs/2026-07-26-ingestion-quality-design.md` §12 for the original 3-item sequence)
 
@@ -163,3 +163,13 @@ Following the existing pattern (fakes + `MemorySaver`, per `docs/superpowers/spe
 ## 9. Roadmap context
 
 This closes out retrieval-quality roadmap item 2 (reranking, hybrid search, smarter rewrite — all three now addressed). Item 3, **generation correctness** (hallucination checking, citation fidelity, including the known `get_document_content` title/filename mislabeling bug), is next and not yet grilled.
+
+## 10. Implementation notes (2026-08-10)
+
+Shipped as designed, with three details that differ from the draft's placeholders:
+
+- **Shared helper location:** the document-dedup helper landed at `backend/app/services/citations.py` (`dedupe_chunks_by_document` + `to_citations`), not the tentatively-named `app/rag/citations.py` (§5.1/§6). `format_chunks_for_llm` imports it from there.
+- **`grade` return shape:** `grade` returns `context_rejected` (not a bare `relevant`) alongside `grade_reason` (`nodes.py`); the reason flows into `rewrite` exactly as §5.3 describes.
+- **Linear-path entry:** after `condense`, the linear path enters a `triage` node (`builder.py`) which then routes toward `force_retrieve` when notes are needed — §6.1 sketched `condense → force_retrieve` directly, collapsing a routing step that now exists explicitly.
+
+Covered by `backend/tests/test_graph_nodes.py`, `test_graph_flow.py`, and `test_graph_tools.py`.
