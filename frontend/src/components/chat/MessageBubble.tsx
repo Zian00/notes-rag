@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
 import { Citations } from "@/components/chat/Citations"
 import { StreamingCursor } from "@/components/chat/StreamingCursor"
+import { ThinkingIndicator } from "@/components/chat/ThinkingIndicator"
 import { useMarkdownComponents } from "@/components/chat/useMarkdownComponents"
 import { rehypeCitationMarkers } from "@/lib/rehypeCitationMarkers"
 import { rehypeStreamingCursor } from "@/lib/rehypeStreamingCursor"
@@ -58,11 +59,12 @@ export function MessageBubble({ message, isStreamingThisMessage }: MessageBubble
         )}
       >
         {renderAsMarkdown ? (
-          <div className="flex flex-col gap-2 [overflow-wrap:anywhere]">
-            {/* Nothing to parse yet (waiting for the first token) — the cursor
-                plugin below needs at least one text node to attach to. */}
+          <div className="flex flex-col gap-2 wrap-anywhere">
+            {/* Nothing to parse yet (waiting for the first token) — show the
+                "Thinking…" indicator instead of an empty bubble; the cursor
+                plugin below needs at least one text node to attach to anyway. */}
             {isStreamingThisMessage && !message.content ? (
-              <StreamingCursor />
+              <ThinkingIndicator />
             ) : (
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
@@ -81,7 +83,7 @@ export function MessageBubble({ message, isStreamingThisMessage }: MessageBubble
             )}
           </div>
         ) : (
-          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+          <p className="whitespace-pre-wrap wrap-anywhere">
             {message.content}
             {isStreamingThisMessage && <StreamingCursor />}
           </p>

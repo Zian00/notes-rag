@@ -142,6 +142,38 @@ describe("ChatPage", () => {
     expect(await screen.findByText(citation.title as string)).toBeInTheDocument()
   })
 
+  it("shows a 'Thinking' indicator in the empty bubble until the first token arrives", async () => {
+    mockAuthed()
+    // Hold the stream open after `meta` but before any `token`, so the assistant
+    // bubble sits in its empty, waiting-for-first-token state — the latency gap
+    // the Thinking indicator fills. Same gate pattern as the mid-stream tests.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockStreamChat.mockImplementation(async function* (): AsyncGenerator<ChatFrame> {
+      yield { event: "meta", data: { conversation_id: "convo-new" } }
+      await gate
+      yield { event: "token", data: { delta: "here it is" } }
+      yield { event: "done", data: {} }
+    })
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "explain N:N relationship")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    // Before any token streams in, the empty bubble reads "Thinking", not blank.
+    expect(await screen.findByText(/thinking/i)).toBeInTheDocument()
+
+    // Once the first token arrives the indicator gives way to the real answer.
+    release()
+    await waitFor(() => expect(screen.getByText("here it is")).toBeInTheDocument())
+    expect(screen.queryByText(/thinking/i)).not.toBeInTheDocument()
+  })
+
   it("loads and seeds history when opening an existing conversation", async () => {
     mockAuthed()
     server.use(
