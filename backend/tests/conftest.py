@@ -33,7 +33,7 @@ def _test_database_url() -> str:
 TEST_DATABASE_URL = _test_database_url()
 
 # Tables whose rows are wiped between tests (NOT alembic_version).
-_TRUNCATE_TABLES = "users, refresh_tokens, documents, document_chunks, conversations"
+_TRUNCATE_TABLES = "users, refresh_tokens, documents, document_chunks, conversations, groups"
 
 
 def hash_content(content: str) -> str:

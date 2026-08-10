@@ -18,6 +18,11 @@ class Conversation(Base):
     )
     # Title is derived from the first question (truncated); nullable until the first turn.
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Group this chat belongs to; NULL = ungrouped. SET NULL so deleting a group
+    # orphans its chats to ungrouped rather than deleting them.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
