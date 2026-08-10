@@ -18,7 +18,7 @@ async def search(
         current_user.id,
         body.query,
         top_k=body.top_k,
-        course=body.course,
+        group_id=body.group_id,
         tags=body.tags,
     )
     # Map the repository's ChunkSearchResult dataclasses to the API ChunkMatch schema.

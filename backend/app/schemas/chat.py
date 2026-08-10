@@ -15,7 +15,10 @@ class ChatRequest(BaseModel):
     # min_length=1 rejects empty questions; top_k bounded 1–20 (narrower than search's 50).
     question: str = Field(min_length=1)
     conversation_id: uuid.UUID | None = None
-    course: str | None = None
+    # Group scope is honored ONLY when creating a new conversation (conversation_id is
+    # None). For an existing conversation the stored conversation.group_id wins, so the
+    # client can never widen or change a chat's scope after creation.
+    group_id: uuid.UUID | None = None
     tags: list[str] | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
 

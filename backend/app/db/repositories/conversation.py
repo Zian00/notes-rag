@@ -17,10 +17,10 @@ class ConversationRepository(BaseRepository[Conversation]):
         super().__init__(Conversation, session)
 
     async def create(  # type: ignore[override]
-        self, *, user_id: uuid.UUID, title: str | None
+        self, *, user_id: uuid.UUID, title: str | None, group_id: uuid.UUID | None = None
     ) -> Conversation:
         # Overrides BaseRepository.create(**values) with a typed signature for safety.
-        convo = Conversation(user_id=user_id, title=title)
+        convo = Conversation(user_id=user_id, title=title, group_id=group_id)
         self._session.add(convo)
         await self._session.flush()  # populate id
         return convo

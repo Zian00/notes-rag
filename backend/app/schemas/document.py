@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from uuid import UUID
 
@@ -50,7 +51,8 @@ class SearchRequest(BaseModel):
     # overly large result sets that would balloon memory and latency.
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=50)
-    course: str | None = None
+    # Scope search to one group's documents; None searches all the user's docs.
+    group_id: uuid.UUID | None = None
     tags: list[str] | None = None
 
 

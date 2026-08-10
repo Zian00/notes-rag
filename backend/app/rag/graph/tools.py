@@ -65,21 +65,23 @@ def build_tools(
     @tool
     async def retrieve_notes(
         query: str,
-        course: str | None = None,
         tags: list[str] | None = None,
         *,
         config: RunnableConfig,
     ) -> list[dict[str, Any]]:
         """Search the user's lecture notes for passages relevant to the query.
-        Use for questions and topic summaries. Optionally narrow by course or tags."""
+        Use for questions and topic summaries. Optionally narrow by tags."""
         cfg = config.get("configurable") or {}
+        # group_id comes ONLY from config (server-enforced conversation scope) — it is
+        # deliberately not a tool param, so the model cannot widen scope past the
+        # conversation's group.
         async with sessionmaker() as session:
             service = RetrievalService(ChunkRepository(session), embeddings, default_top_k)
             results = await service.search(
                 _user_id(config),
                 query,
                 top_k=cfg.get("top_k"),
-                course=course or cfg.get("course"),
+                group_id=cfg.get("group_id"),
                 tags=tags or cfg.get("tags"),
             )
         return [_chunk_to_dict(r) for r in results]

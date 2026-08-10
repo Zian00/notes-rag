@@ -4,6 +4,7 @@ import pytest
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
+from app.models.group import Group
 
 from tests.conftest import hash_content
 
@@ -73,16 +74,21 @@ async def test_search_is_scoped_to_user(db_session):
 
 
 @pytest.mark.asyncio
-async def test_search_filters_by_course(db_session):
-    user, doc = await _user_and_doc(db_session, course="BIO")
+async def test_search_filters_by_group(db_session):
+    user, doc = await _user_and_doc(db_session)
+    group = Group(user_id=user.id, name="BIO")
+    db_session.add(group)
+    await db_session.flush()
+    doc.group_id = group.id
     repo = ChunkRepository(db_session)
     await repo.add_many(
         [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
               content="bio chunk", content_hash=hash_content("bio chunk"), embedding=_vec(0))]
     )
     await db_session.commit()
-    assert len(await repo.search_similar(user.id, _vec(0), top_k=5, course="BIO")) == 1
-    assert await repo.search_similar(user.id, _vec(0), top_k=5, course="MATH") == []
+    # Scoping to the doc's group finds it; a different group id excludes it (strict).
+    assert len(await repo.search_similar(user.id, _vec(0), top_k=5, group_id=group.id)) == 1
+    assert await repo.search_similar(user.id, _vec(0), top_k=5, group_id=uuid.uuid4()) == []
 
 
 def _chunk_row(document_id, user_id, chunk_index, content_hash):
@@ -183,8 +189,12 @@ async def test_search_keyword_is_scoped_to_user(db_session):
 
 
 @pytest.mark.asyncio
-async def test_search_keyword_filters_by_course(db_session):
-    user, doc = await _user_and_doc(db_session, course="BIO")
+async def test_search_keyword_filters_by_group(db_session):
+    user, doc = await _user_and_doc(db_session)
+    group = Group(user_id=user.id, name="BIO")
+    db_session.add(group)
+    await db_session.flush()
+    doc.group_id = group.id
     repo = ChunkRepository(db_session)
     await repo.add_many(
         [dict(document_id=doc.id, user_id=user.id, chunk_index=0,
@@ -192,8 +202,8 @@ async def test_search_keyword_filters_by_course(db_session):
               embedding=_vec(0))]
     )
     await db_session.commit()
-    assert len(await repo.search_keyword(user.id, "respiration", top_k=5, course="BIO")) == 1
-    assert await repo.search_keyword(user.id, "respiration", top_k=5, course="MATH") == []
+    assert len(await repo.search_keyword(user.id, "respiration", top_k=5, group_id=group.id)) == 1
+    assert await repo.search_keyword(user.id, "respiration", top_k=5, group_id=uuid.uuid4()) == []
 
 
 @pytest.mark.asyncio

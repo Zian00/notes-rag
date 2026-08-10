@@ -65,7 +65,7 @@ class RetrievalService:
         user_id: uuid.UUID,
         query: str,
         top_k: int | None = None,
-        course: str | None = None,
+        group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         if not query.strip():
@@ -80,12 +80,12 @@ class RetrievalService:
             user_id,
             embedding,
             top_k=fetch_k,
-            course=course,
+            group_id=group_id,
             tags=tags,
         )
         if self._keyword_search:
             keyword_candidates = await self._chunks.search_keyword(
-                user_id, query, top_k=fetch_k, course=course, tags=tags
+                user_id, query, top_k=fetch_k, group_id=group_id, tags=tags
             )
             candidates = _merge_dedupe(candidates, keyword_candidates)
         if self._reranker is not None:

@@ -38,7 +38,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         self,
         user_id: uuid.UUID,
         score_expr: ColumnElement[float],
-        course: str | None,
+        group_id: uuid.UUID | None,
         tags: list[str] | None,
     ) -> Select[Any]:
         """Shared SELECT shape for both retrieval paths: same columns, join, and
@@ -59,8 +59,10 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
             # per-user isolation: never return another user's chunks
             .where(DocumentChunk.user_id == user_id)
         )
-        if course is not None:
-            stmt = stmt.where(Document.course == course)
+        # Group scope is strict: a grouped chat sees ONLY that group's documents.
+        # group_id is None (ungrouped chat) applies no group filter → all user docs.
+        if group_id is not None:
+            stmt = stmt.where(Document.group_id == group_id)
         if tags:
             stmt = stmt.where(Document.tags.contains(tags))  # JSONB @> : doc has all given tags
         return stmt
@@ -70,7 +72,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         user_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int,
-        course: str | None = None,
+        group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         # cosine_distance emits pgvector's `<=>` operator. Distance 0 = identical direction,
@@ -79,7 +81,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         # order_by(distance) uses the labeled expression object (a bare "distance" string
         # would raise in SQLAlchemy 2.0). The HNSW index makes this ORDER BY fast.
         stmt = (
-            self._base_chunk_query(user_id, distance, course, tags)
+            self._base_chunk_query(user_id, distance, group_id, tags)
             .order_by(distance)
             .limit(top_k)
         )
@@ -103,7 +105,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
         user_id: uuid.UUID,
         query: str,
         top_k: int,
-        course: str | None = None,
+        group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         """BM25 keyword search via pg_search's bm25 index on document_chunks(content).
@@ -117,7 +119,7 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
             "paradedb.score(document_chunks.id)"
         ).label("score")
         stmt = (
-            self._base_chunk_query(user_id, score_expr, course, tags)
+            self._base_chunk_query(user_id, score_expr, group_id, tags)
             .where(
                 text(
                     "document_chunks.content @@@ paradedb.match('content', :kw_query)"

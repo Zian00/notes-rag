@@ -46,11 +46,13 @@ class ChatService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _create(self, user_id: uuid.UUID, question: str) -> uuid.UUID:
-        """Insert a new conversation row and return its id."""
+    async def _create(
+        self, user_id: uuid.UUID, question: str, group_id: uuid.UUID | None
+    ) -> uuid.UUID:
+        """Insert a new conversation row (optionally in a group) and return its id."""
         async with self._sm() as s:
             convo = await ConversationRepository(s).create(
-                user_id=user_id, title=question[:_TITLE_MAX]
+                user_id=user_id, title=question[:_TITLE_MAX], group_id=group_id
             )
             await s.commit()
             return convo.id
@@ -71,7 +73,7 @@ class ChatService:
         user_id: uuid.UUID,
         conversation_id: uuid.UUID | None,
         question: str,
-        course: str | None = None,
+        group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
         top_k: int | None = None,
     ) -> AsyncIterator[str]:
@@ -88,12 +90,19 @@ class ChatService:
         created_this_call = conversation_id is None
 
         # Ownership check / row creation before we yield anything.
+        # Group scope is resolved server-side: a new conversation adopts the client's
+        # group_id at creation; an existing one always uses its STORED group_id, so a
+        # client can never re-scope a chat by passing a different group on turn N.
         if conversation_id is None:
-            conversation_id = await self._create(user_id, question)
+            conversation_id = await self._create(user_id, question, group_id)
+            group_for_turn = group_id
         else:
-            # Raises ConversationNotFound immediately (before the StreamingResponse begins)
-            # so the endpoint can map it to a 404 if needed.
-            await self.verify_ownership(conversation_id, user_id)
+            async with self._sm() as s:
+                convo = await ConversationRepository(s).get_for_user(conversation_id, user_id)
+            # Raises before the StreamingResponse begins so the endpoint can map to 404.
+            if convo is None:
+                raise ConversationNotFound(str(conversation_id))
+            group_for_turn = convo.group_id
 
         # First SSE frame: tells the client which conversation this belongs to.
         yield _sse("meta", {"conversation_id": str(conversation_id)})
@@ -103,7 +112,7 @@ class ChatService:
         config: dict[str, Any] = {"configurable": {
             "thread_id": str(conversation_id),
             "user_id": user_id,
-            "course": course,
+            "group_id": group_for_turn,
             "tags": tags,
             "top_k": top_k,
         }}

@@ -37,7 +37,7 @@ async def chat(
         user_id=current_user.id,
         conversation_id=body.conversation_id,
         question=body.question,
-        course=body.course,
+        group_id=body.group_id,
         tags=body.tags,
         top_k=body.top_k,
     )

@@ -29,8 +29,11 @@ from typing import Any
 
 import pytest
 from app.core.config import Settings
+from app.db.repositories.chunk import ChunkRepository
+from app.db.repositories.conversation import ConversationRepository
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
+from app.models.group import Group
 from app.rag.graph import build_rag_graph
 from app.rag.graph.nodes import CondensedQuestion, Grade, Triage
 from app.services.chat import ChatService, ConversationNotFound
@@ -967,6 +970,104 @@ async def test_stream_error_frame_and_orphan_cleanup(_engine: AsyncEngine) -> No
 # ---------------------------------------------------------------------------
 # 6. delete_conversation — removes row, get_detail then raises
 # ---------------------------------------------------------------------------
+
+
+async def _seed_doc_in_group(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    group_name: str,
+    content: str,
+    slot: int,
+) -> tuple[Any, Any]:
+    """Create a group + one document (in it) + one chunk; return (group, doc)."""
+    group = Group(user_id=user_id, name=group_name)
+    session.add(group)
+    await session.flush()  # populate group.id
+    doc = await DocumentRepository(session).create(
+        user_id=user_id,
+        filename=f"{group_name}.pdf",
+        title=group_name,
+        course=None,
+        content_type="application/pdf",
+        content_hash=uuid.uuid4().hex,
+        storage_path=f"/tmp/{group_name}.pdf",
+        file_size=1,
+        chunk_count=0,
+        embedding_model="test",
+        embedding_dimension=DIM,
+        group_id=group.id,
+    )
+    await ChunkRepository(session).add_many(
+        [{
+            "document_id": doc.id,
+            "user_id": user_id,
+            "chunk_index": 0,
+            "content": content,
+            "content_hash": hash_content(content),
+            "embedding": _vec(slot),
+        }]
+    )
+    await session.commit()
+    return group, doc
+
+
+@pytest.mark.asyncio
+async def test_stream_group_scope_is_server_enforced(_engine: AsyncEngine) -> None:
+    """Group scope is resolved server-side, not from the client.
+
+    A new conversation created in group A retrieves ONLY group A's documents; and
+    when a later turn on that same conversation passes a *different* group_id, the
+    client value is ignored — the stored conversation.group_id (A) still wins.
+    """
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        user = await _make_user(s)
+        group_a, doc_a = await _seed_doc_in_group(
+            s, user.id, group_name="A", content="alpha lives in group A", slot=0
+        )
+        group_b, doc_b = await _seed_doc_in_group(
+            s, user.id, group_name="B", content="beta lives in group B", slot=1
+        )
+
+    checkpointer = InMemorySaver()  # shared so turn 2 resumes the same thread
+
+    # Turn 1: new conversation scoped to group A.
+    turn1 = FakeChatModel(
+        responses=[
+            _retrieve_call("notes", "t1"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("answer [1]."),
+        ]
+    )
+    frames1 = await _collect_frames(_build_service(turn1, maker, checkpointer).stream_answer(
+        user_id=user.id, conversation_id=None, group_id=group_a.id, question="q1",
+    ))
+    convo_id = uuid.UUID(next(d for e, d in frames1 if e == "meta")["conversation_id"])
+    doc_ids_1 = {c["document_id"] for c in next(d for e, d in frames1 if e == "citations")}
+    assert str(doc_a.id) in doc_ids_1
+    assert str(doc_b.id) not in doc_ids_1  # group B excluded (strict)
+
+    # The chosen group must be persisted on the row.
+    async with maker() as s:
+        row = await ConversationRepository(s).get_for_user(convo_id, user.id)
+    assert row is not None and row.group_id == group_a.id
+
+    # Turn 2: client tries to switch scope to group B — must be ignored.
+    turn2 = FakeChatModel(
+        responses=[
+            CondensedQuestion(is_follow_up=False),
+            _retrieve_call("notes", "t2"),
+            Grade(relevant=True, reason="context answers the question"),
+            AIMessage("answer [1]."),
+        ]
+    )
+    frames2 = await _collect_frames(_build_service(turn2, maker, checkpointer).stream_answer(
+        user_id=user.id, conversation_id=convo_id, group_id=group_b.id, question="q2",
+    ))
+    doc_ids_2 = {c["document_id"] for c in next(d for e, d in frames2 if e == "citations")}
+    assert str(doc_a.id) in doc_ids_2  # still group A
+    assert str(doc_b.id) not in doc_ids_2  # client-supplied group B ignored
 
 
 @pytest.mark.asyncio
