@@ -11,7 +11,9 @@ from starlette.requests import Request
 from app.core.config import Settings, get_settings
 from app.core.security import PasswordHasher, TokenService
 from app.db.repositories.chunk import ChunkRepository
+from app.db.repositories.conversation import ConversationRepository
 from app.db.repositories.document import DocumentRepository
+from app.db.repositories.group import GroupRepository
 from app.db.repositories.refresh_token import RefreshTokenRepository
 from app.db.repositories.user import UserRepository
 from app.db.session import get_db, get_sessionmaker
@@ -26,6 +28,7 @@ from app.rag.semantic_chunking import SemanticChunker
 from app.rag.storage import LocalFileStorage, StorageBackend
 from app.services.auth import AuthService
 from app.services.chat import ChatService
+from app.services.group import GroupService
 from app.services.ingestion import IngestionService
 from app.services.retrieval import RetrievalService
 
@@ -39,6 +42,15 @@ def get_auth_service(session: AsyncSession = Depends(get_db)) -> AuthService:  #
         RefreshTokenRepository(session),
         PasswordHasher(),
         TokenService(),
+    )
+
+
+def get_group_service(session: AsyncSession = Depends(get_db)) -> GroupService:  # noqa: B008
+    return GroupService(
+        session,
+        GroupRepository(session),
+        ConversationRepository(session),
+        DocumentRepository(session),
     )
 
 

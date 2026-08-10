@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
@@ -29,6 +29,10 @@ class DocumentRepository(BaseRepository[Document]):
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def count_by_group(self, group_id: uuid.UUID) -> int:
+        stmt = select(func.count()).select_from(Document).where(Document.group_id == group_id)
+        return int((await self._session.execute(stmt)).scalar_one())
 
     async def get_by_user_and_hash(
         self, user_id: uuid.UUID, content_hash: str

@@ -36,6 +36,12 @@ class ConversationRepository(BaseRepository[Conversation]):
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def count_by_group(self, group_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count()).select_from(Conversation).where(Conversation.group_id == group_id)
+        )
+        return int((await self._session.execute(stmt)).scalar_one())
+
     async def touch(self, conversation_id: uuid.UUID) -> None:
         # Bump updated_at so the conversation rises to the top of the list after a turn.
         await self._session.execute(
