@@ -16,9 +16,11 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.db.repositories.conversation import ConversationRepository
+from app.db.repositories.conversation import UNSET, ConversationRepository
+from app.db.repositories.group import GroupRepository
 from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, new_turn_inputs
 from app.services.citations import to_citations
+from app.services.group import GroupNotFound
 
 # Maximum characters used as the conversation title (derived from first question).
 _TITLE_MAX = 120
@@ -224,6 +226,37 @@ class ChatService:
             elif isinstance(m, HumanMessage) and content:
                 messages.append({"role": "user", "content": content})
         return {"conversation": convo, "messages": messages}
+
+    async def update_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        title: Any = UNSET,
+        group_id: uuid.UUID | None = UNSET,
+    ) -> Any:
+        """Rename and/or move a conversation (ownership-checked); return the updated row.
+
+        Passing group_id=None ungroups the chat; a non-None group_id must reference a
+        group owned by the same user (raises GroupNotFound otherwise). Fields left UNSET
+        are untouched. Raises ConversationNotFound if the row isn't the caller's.
+        """
+        async with self._sm() as s:
+            convos = ConversationRepository(s)
+            convo = await convos.get_for_user(conversation_id, user_id)
+            if convo is None:
+                raise ConversationNotFound(str(conversation_id))
+            # Moving into a group: the target must belong to the caller. Ungroup
+            # (group_id=None) skips this — there's no group to validate.
+            if group_id is not UNSET and group_id is not None:
+                if await GroupRepository(s).get_for_user(group_id, user_id) is None:
+                    raise GroupNotFound(str(group_id))
+            await convos.update_fields(conversation_id, title=title, group_id=group_id)
+            await s.commit()
+            # Re-fetch: commit expired the instance, so reload the committed state.
+            refreshed = await convos.get_for_user(conversation_id, user_id)
+            assert refreshed is not None  # just updated it in this session
+            return refreshed
 
     async def delete_conversation(self, conversation_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Delete the conversation row (ownership-checked) and best-effort checkpointer cleanup."""

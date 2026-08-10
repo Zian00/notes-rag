@@ -255,3 +255,153 @@ async def test_conversations_unauthorized(client: AsyncClient) -> None:
 
     resp = await client.delete(f"/conversations/{fake_id}")
     assert resp.status_code == 401
+
+    resp = await client.patch(f"/conversations/{fake_id}", json={"title": "x"})
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 6. PATCH /conversations/{id} — rename + move/ungroup (T3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_rename(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """PATCH with a title renames the conversation and persists."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token = auth_client.headers["Authorization"].split(" ")[1]
+        user_id = TokenService().decode_access_token(token)
+        await _seed_doc(s, user_id)
+
+    convo_id = await _do_chat(auth_client, fake_chat_model, "what is a heap?")
+
+    resp = await auth_client.patch(f"/conversations/{convo_id}", json={"title": "  My chat  "})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "My chat"  # StringConstraints strips whitespace
+
+    # Rename persists across a fresh GET.
+    detail = (await auth_client.get(f"/conversations/{convo_id}")).json()
+    assert detail["title"] == "My chat"
+
+
+@pytest.mark.asyncio
+async def test_patch_move_and_ungroup(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """PATCH with group_id moves the chat; group_id=null ungroups it."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token = auth_client.headers["Authorization"].split(" ")[1]
+        user_id = TokenService().decode_access_token(token)
+        await _seed_doc(s, user_id)
+
+    convo_id = await _do_chat(auth_client, fake_chat_model, "what is a heap?")
+    gid = (await auth_client.post("/groups", json={"name": "CS101"})).json()["id"]
+
+    # Move into the group.
+    resp = await auth_client.patch(f"/conversations/{convo_id}", json={"group_id": gid})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["group_id"] == gid
+
+    # Explicit null ungroups.
+    resp = await auth_client.patch(f"/conversations/{convo_id}", json={"group_id": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["group_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_move_to_foreign_group_rejected(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """Moving into another user's group (or a non-existent one) is rejected with 404."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token_a = auth_client.headers["Authorization"].split(" ")[1]
+        user_a_id = TokenService().decode_access_token(token_a)
+        await _seed_doc(s, user_a_id)
+
+    convo_id = await _do_chat(auth_client, fake_chat_model, "what is a heap?")
+
+    # Register + log in as user B, who owns a group A must not be able to target.
+    b_email = f"patch-b-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+    b_gid = (await auth_client.post("/groups", json={"name": "B-group"})).json()["id"]
+
+    # Back to user A: targeting B's group → 404.
+    auth_client.headers["Authorization"] = f"Bearer {token_a}"
+    resp = await auth_client.patch(f"/conversations/{convo_id}", json={"group_id": b_gid})
+    assert resp.status_code == 404
+
+    # A non-existent group → 404 too.
+    resp = await auth_client.patch(
+        f"/conversations/{convo_id}", json={"group_id": str(uuid.uuid4())}
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_non_owned_conversation_404(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """User B cannot PATCH user A's conversation (404)."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token_a = auth_client.headers["Authorization"].split(" ")[1]
+        user_a_id = TokenService().decode_access_token(token_a)
+        await _seed_doc(s, user_a_id)
+
+    convo_id_a = await _do_chat(auth_client, fake_chat_model, "what is a heap?")
+
+    b_email = f"patch-iso-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+
+    resp = await auth_client.patch(f"/conversations/{convo_id_a}", json={"title": "hijack"})
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_empty_body_rejected(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """PATCH with no fields is a 422 — nothing to update."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token = auth_client.headers["Authorization"].split(" ")[1]
+        user_id = TokenService().decode_access_token(token)
+        await _seed_doc(s, user_id)
+
+    convo_id = await _do_chat(auth_client, fake_chat_model, "what is a heap?")
+
+    resp = await auth_client.patch(f"/conversations/{convo_id}", json={})
+    assert resp.status_code == 422

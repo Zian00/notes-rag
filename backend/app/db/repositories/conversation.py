@@ -1,10 +1,15 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
 from app.models.conversation import Conversation
+
+# Sentinel distinguishing "field omitted" from "field set to None" in partial updates —
+# None is a real value for group_id (ungroup), so it can't double as "leave unchanged".
+UNSET: Any = object()
 
 
 class ConversationRepository(BaseRepository[Conversation]):
@@ -41,6 +46,25 @@ class ConversationRepository(BaseRepository[Conversation]):
             select(func.count()).select_from(Conversation).where(Conversation.group_id == group_id)
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def update_fields(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        title: Any = UNSET,
+        group_id: uuid.UUID | None = UNSET,
+    ) -> None:
+        """Partial update: only the fields passed (i.e. not UNSET) are written."""
+        values: dict[str, Any] = {}
+        if title is not UNSET:
+            values["title"] = title
+        if group_id is not UNSET:
+            values["group_id"] = group_id
+        if not values:
+            return
+        await self._session.execute(
+            update(Conversation).where(Conversation.id == conversation_id).values(**values)
+        )
 
     async def touch(self, conversation_id: uuid.UUID) -> None:
         # Bump updated_at so the conversation rises to the top of the list after a turn.

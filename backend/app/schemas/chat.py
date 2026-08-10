@@ -1,7 +1,14 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+# Rename bound: max 120 matches the conversations.title column (String(120)); strip +
+# min_length=1 rejects blank/whitespace-only titles.
+ConversationTitle = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
+]
 
 
 class ChatRequest(BaseModel):
@@ -29,8 +36,27 @@ class ConversationResponse(BaseModel):
 
     id: uuid.UUID
     title: str | None
+    group_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationUpdate(BaseModel):
+    """PATCH body: rename and/or move a conversation.
+
+    PATCH semantics — a field is only touched when the client actually sends it
+    (tracked via model_fields_set): omitting `group_id` leaves the group as-is,
+    while sending `group_id: null` explicitly moves the chat to ungrouped.
+    """
+
+    title: ConversationTitle | None = None
+    group_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one(self) -> "ConversationUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Provide title and/or group_id.")
+        return self
 
 
 class MessageResponse(BaseModel):
