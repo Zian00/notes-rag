@@ -5,8 +5,12 @@ import { useDocuments } from "@/api/hooks/useDocuments"
 
 const SKELETON_ROW_COUNT = 3
 
-export function DocumentList() {
-  const { data, isLoading, error } = useDocuments()
+interface DocumentListProps {
+  groupId?: string
+}
+
+export function DocumentList({ groupId }: DocumentListProps = {}) {
+  const { data, isLoading, error } = useDocuments(groupId)
 
   if (isLoading) {
     return (

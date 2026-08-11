@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from app.db.repositories.chunk import ChunkRepository
 from app.db.repositories.document import DocumentRepository
+from app.db.repositories.group import GroupRepository
 from app.db.repositories.user import UserRepository
 from app.rag.chunking import Chunker
 from app.rag.parsing import ParserDispatcher
@@ -87,6 +88,27 @@ async def test_process_parses_chunks_embeds_and_marks_ready(db_session, tmp_path
     chunks = await ChunkRepository(db_session).list()
     assert len(chunks) == processed.chunk_count
     assert all(len(c.embedding) == 1536 for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_process_preserves_group_id_assigned_at_upload(db_session, tmp_path):
+    user = await _user(db_session)
+    group = await GroupRepository(db_session).create(user_id=user.id, name="CS101")
+    await db_session.commit()
+    storage = LocalFileStorage(str(tmp_path))
+    svc = _service(db_session, storage)
+    staged = await svc.stage(
+        user_id=user.id, filename="notes.txt", content_type="text/plain",
+        data=b"first paragraph of notes. second paragraph of notes.",
+        group_id=group.id,
+    )
+    assert staged.group_id == group.id
+
+    await svc.process(staged.id)
+
+    processed = await DocumentRepository(db_session).get(staged.id)
+    assert processed.status == "ready"
+    assert processed.group_id == group.id
 
 
 @pytest.mark.asyncio

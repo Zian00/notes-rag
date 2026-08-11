@@ -73,6 +73,14 @@ function renderPage() {
   )
 }
 
+// The upload form now lives behind a dialog opened via the "+ Upload"
+// header action (T11) — every test that interacts with it must open the
+// dialog first, unlike the old always-expanded form.
+async function openUploadDialog(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: /\+ upload/i }))
+  await screen.findByRole("dialog")
+}
+
 describe("DocumentsPage", () => {
   it("shows an empty state when there are no documents", async () => {
     server.use(http.get(`${API_BASE}/documents`, () => HttpResponse.json([])))
@@ -106,6 +114,7 @@ describe("DocumentsPage", () => {
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
     const fileInput = screen.getByLabelText(/choose file/i, {
@@ -120,14 +129,18 @@ describe("DocumentsPage", () => {
     expect(await screen.findByText(/uploaded/i)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText("Notes 1")).toBeInTheDocument())
     expect(listCallCount).toBe(2)
+    // The dialog closes itself on a successful upload.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
   it("does not nest the file input inside a button (guards against click re-entrancy)", async () => {
     server.use(http.get(`${API_BASE}/documents`, () => HttpResponse.json([])))
 
+    const user = userEvent.setup()
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     // The dropzone must be a <label>, not a <button> wrapping interactive content —
     // a button ancestor here would mean clicking it re-triggers input.click() via
@@ -149,6 +162,7 @@ describe("DocumentsPage", () => {
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     const file = new File(["x"], "big.pdf", { type: "application/pdf" })
     const fileInput = screen.getByLabelText(/choose file/i, {
@@ -175,6 +189,7 @@ describe("DocumentsPage", () => {
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     const file = new File(["x"], "dup.pdf", { type: "application/pdf" })
     const fileInput = screen.getByLabelText(/choose file/i, {
@@ -226,6 +241,7 @@ describe("DocumentsPage", () => {
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
     const fileInput = screen.getByLabelText(/choose file/i, {
@@ -265,6 +281,7 @@ describe("DocumentsPage", () => {
     renderPage()
 
     await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
 
     const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
     const fileInput = screen.getByLabelText(/choose file/i, {
@@ -286,6 +303,60 @@ describe("DocumentsPage", () => {
     await waitFor(() => expect(uploadedGroupId).toBe(group1.id))
   })
 
+  it("disables Upload while creating a new group, to prevent submitting the pre-creation group", async () => {
+    // A deferred /groups POST lets the test hold the create request open long
+    // enough to assert Upload stays disabled the whole time — without this,
+    // a fast mock response could resolve before the assertion even runs,
+    // masking the exact race this test guards against (see #14: clicking
+    // Upload while a same-name new group was still being created silently
+    // uploaded the document ungrouped).
+    let resolveCreateGroup: (() => void) | undefined
+    const createGroupGate = new Promise<void>((resolve) => {
+      resolveCreateGroup = resolve
+    })
+    let groupsState: GroupResponse[] = []
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json(groupsState)),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/groups`, async () => {
+        await createGroupGate
+        groupsState = [...groupsState, group1]
+        return HttpResponse.json(group1, { status: 200 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText(/upload your first note/i)
+    await openUploadDialog(user)
+
+    const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
+    await user.upload(fileInput, file)
+    await screen.findByText("notes1.pdf")
+
+    // Disabled as soon as the inline create form opens — before any network
+    // request even starts — closing the whole race window, not just the
+    // network-latency slice of it.
+    await user.selectOptions(screen.getByLabelText("Group"), "+ New group…")
+    expect(screen.getByRole("button", { name: /^upload$/i })).toBeDisabled()
+
+    const newGroupInput = await screen.findByPlaceholderText(/group name/i)
+    await user.type(newGroupInput, group1.name)
+    await user.keyboard("{Enter}")
+
+    // Still disabled while the create request is in flight (the gate hasn't
+    // been released yet).
+    expect(screen.getByRole("button", { name: /^upload$/i })).toBeDisabled()
+
+    resolveCreateGroup?.()
+    await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue(group1.id))
+    expect(screen.getByRole("button", { name: /^upload$/i })).not.toBeDisabled()
+  })
+
   it("changes an existing document's group from its row", async () => {
     let patchedBody: unknown
     server.use(
@@ -305,5 +376,40 @@ describe("DocumentsPage", () => {
     await user.selectOptions(rowGroupSelect, group2.name)
 
     await waitFor(() => expect(patchedBody).toEqual({ group_id: group2.id }))
+  })
+
+  it("keeps the upload form collapsed behind a dialog until opened", async () => {
+    server.use(http.get(`${API_BASE}/documents`, () => HttpResponse.json([])))
+
+    renderPage()
+
+    await screen.findByText(/upload your first note/i)
+
+    expect(screen.queryByLabelText(/choose file/i)).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /\+ upload/i })).toBeInTheDocument()
+  })
+
+  it("filters the document list by group via the dropdown", async () => {
+    let requestedGroupId: string | null = null
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1, group2])),
+      http.get(`${API_BASE}/documents`, ({ request }) => {
+        const url = new URL(request.url)
+        requestedGroupId = url.searchParams.get("group_id")
+        return HttpResponse.json(requestedGroupId === group1.id ? [doc1] : [doc1, doc2])
+      })
+    )
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText("Notes 1")
+    expect(screen.getByText("Notes 2")).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText("Filter by group"), group1.name)
+
+    await waitFor(() => expect(requestedGroupId).toBe(group1.id))
+    await waitFor(() => expect(screen.queryByText("Notes 2")).not.toBeInTheDocument())
+    expect(screen.getByText("Notes 1")).toBeInTheDocument()
   })
 })

@@ -21,6 +21,13 @@ interface GroupSelectProps {
   // would be redundant — the label stays in the accessibility tree via sr-only.
   hideLabel?: boolean
   className?: string
+  // Fires whenever the inline "+ New group…" form is open or its create
+  // request is in flight. A caller with an adjacent submit action (e.g.
+  // DocumentsPage's Upload button) MUST gate that action on this — otherwise
+  // clicking it while a new group is still being created reads `value` before
+  // handleCreateSubmit's onChange(group.id) has run, silently submitting with
+  // the pre-creation (often null) group instead of the one just typed.
+  onBusyChange?: (busy: boolean) => void
 }
 
 // A native <select> (not a Radix DropdownMenu) deliberately — this project's
@@ -35,16 +42,22 @@ export function GroupSelect({
   disabled = false,
   hideLabel = false,
   className,
+  onBusyChange,
 }: GroupSelectProps) {
   const groupsQuery = useGroups()
   const createGroup = useCreateGroup()
   const create = useInlineEdit()
   const createInputRef = useRef<HTMLInputElement>(null)
   const selectId = useId()
+  const isBusy = create.isEditing || createGroup.isPending
 
   useEffect(() => {
     if (create.isEditing) createInputRef.current?.focus()
   }, [create.isEditing])
+
+  useEffect(() => {
+    onBusyChange?.(isBusy)
+  }, [isBusy, onBusyChange])
 
   const groups = groupsQuery.data ?? []
 
