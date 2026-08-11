@@ -51,6 +51,51 @@ export function useConversation(
   )
 }
 
+export interface UpdateConversationInput {
+  id: string
+  title?: string
+  // `null` explicitly ungroups; `undefined` (the default when the key is
+  // omitted below) leaves the group untouched — matches the backend's
+  // model_fields_set PATCH semantics (see ConversationUpdate).
+  groupId?: string | null
+}
+
+// Renames and/or moves a conversation via PATCH. Only the fields actually
+// passed end up in the request body, so an omitted `groupId` never
+// accidentally ungroups a chat that was only being renamed (and vice versa).
+export function useUpdateConversation(): UseMutationResult<
+  ConversationResponse,
+  Error,
+  UpdateConversationInput
+> {
+  const queryClient = useQueryClient()
+  const conversationsListKey = getConversationsListKey()
+
+  return useMutation<ConversationResponse, Error, UpdateConversationInput>({
+    mutationFn: async ({ id, title, groupId }) => {
+      const body: { title?: string; group_id?: string | null } = {}
+      if (title !== undefined) body.title = title
+      if (groupId !== undefined) body.group_id = groupId
+
+      const { data, error, response } = await fetchClient.PATCH(
+        "/conversations/{conversation_id}",
+        {
+          params: { path: { conversation_id: id } },
+          body,
+        }
+      )
+      if (error || !data) {
+        if (response.status === 404) throw new Error("Conversation or group not found.")
+        throw new Error("Failed to update conversation.")
+      }
+      return data
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: conversationsListKey })
+    },
+  })
+}
+
 // Deletes a conversation by id and invalidates the conversations list on success.
 export function useDeleteConversation(): UseMutationResult<void, DeleteError, string> {
   const queryClient = useQueryClient()

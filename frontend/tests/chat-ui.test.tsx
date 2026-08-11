@@ -657,9 +657,10 @@ describe("Sidebar conversation list", () => {
     const link = await screen.findByRole("link", { name: /first chat/i })
     expect(link).toHaveAttribute("aria-current", "page")
 
-    await user.click(screen.getByRole("button", { name: /delete first chat/i }))
+    await user.click(screen.getByRole("button", { name: /first chat options/i }))
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }))
     const dialog = await screen.findByRole("dialog")
-    await user.click(within(dialog).getByRole("button", { name: /delete/i }))
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }))
 
     expect(await screen.findByText(/deleted/i)).toBeInTheDocument()
   })
@@ -814,5 +815,76 @@ describe("Sidebar groups", () => {
     await user.type(textbox, "follow up")
     await user.click(screen.getByRole("button", { name: /^send$/i }))
     await waitFor(() => expect(capturedGroupId).toBeUndefined())
+  })
+
+  it("renames a chat inline from the row menu", async () => {
+    mockAuthed()
+    // GET /conversations must reflect the rename on the post-mutation refetch —
+    // a static response would keep showing the pre-rename title.
+    let conversationsState: ConversationResponse[] = [convo1]
+    let patchedBody: unknown
+    server.use(
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json(conversationsState)),
+      http.patch(`${API_BASE}/conversations/${convo1.id}`, async ({ request }) => {
+        patchedBody = await request.json()
+        const renamed = { ...convo1, title: "Renamed chat" }
+        conversationsState = [renamed]
+        return HttpResponse.json(renamed)
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await user.click(await screen.findByRole("button", { name: /first chat options/i }))
+    await user.click(await screen.findByRole("menuitem", { name: /^rename$/i }))
+
+    const input = screen.getByDisplayValue(convo1.title as string)
+    await user.clear(input)
+    await user.type(input, "Renamed chat")
+    await user.keyboard("{Enter}")
+
+    await waitFor(() => expect(patchedBody).toEqual({ title: "Renamed chat" }))
+    expect(await screen.findByRole("link", { name: /renamed chat/i })).toBeInTheDocument()
+  })
+
+  it("moves a chat into a group via the row menu, relocating it into that section", async () => {
+    mockAuthed()
+    let conversationsState: ConversationResponse[] = [convo1]
+    let patchedBody: unknown
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1])),
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json(conversationsState)),
+      http.patch(`${API_BASE}/conversations/${convo1.id}`, async ({ request }) => {
+        patchedBody = await request.json()
+        conversationsState = [{ ...convo1, group_id: group1.id }]
+        return HttpResponse.json(conversationsState[0])
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    // Before the move: collapsing Ungrouped hides the chat, proving it's
+    // rendered there (and nowhere else) to start with.
+    await screen.findByRole("link", { name: /first chat/i })
+    await user.click(screen.getByRole("button", { name: "Ungrouped" }))
+    expect(screen.queryByRole("link", { name: /first chat/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Ungrouped" }))
+    await screen.findByRole("link", { name: /first chat/i })
+
+    await user.click(screen.getByRole("button", { name: /first chat options/i }))
+    await user.click(await screen.findByRole("menuitem", { name: group1.name }))
+
+    await waitFor(() => expect(patchedBody).toEqual({ group_id: group1.id }))
+    await screen.findByRole("link", { name: /first chat/i })
+
+    // After the move: collapsing the group section hides it, and Ungrouped
+    // is empty — the chat relocated, it didn't just get duplicated.
+    await user.click(screen.getByRole("button", { name: group1.name }))
+    expect(screen.queryByRole("link", { name: /first chat/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: group1.name }))
+    await screen.findByRole("link", { name: /first chat/i })
+    expect(screen.getAllByText(/no chats here yet/i)).toHaveLength(1)
   })
 })

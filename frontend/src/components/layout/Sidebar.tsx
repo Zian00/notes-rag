@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { NavLink, useNavigate, useParams } from "react-router-dom"
-import {
-  ChevronDown,
-  FileText,
-  LogOut,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Trash2,
-} from "lucide-react"
+import { ChevronDown, FileText, LogOut, MessageSquare, MoreHorizontal, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/auth/useAuth"
@@ -27,9 +19,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useConversations, useDeleteConversation } from "@/api/hooks/useConversations"
+import {
+  useConversations,
+  useDeleteConversation,
+  useUpdateConversation,
+} from "@/api/hooks/useConversations"
 import { useCreateGroup, useDeleteGroup, useGroups, useRenameGroup } from "@/api/hooks/useGroups"
 import { $api } from "@/api/client"
 import { DeleteError } from "@/api/deleteError"
@@ -153,7 +151,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                 "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
                 isActive
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               )
             }
           >
@@ -346,7 +344,7 @@ function GroupSection({
     "get",
     "/documents",
     { params: { query: { group_id: group.id } } },
-    { enabled: isConfirmOpen },
+    { enabled: isConfirmOpen }
   )
 
   async function handleRenameSubmit() {
@@ -369,7 +367,7 @@ function GroupSection({
       const result = await deleteGroup.mutateAsync(group.id)
       setIsConfirmOpen(false)
       toast.success(
-        `Deleted "${group.name}". ${result.chats_ungrouped} chat(s) and ${result.documents_ungrouped} document(s) moved to Ungrouped.`,
+        `Deleted "${group.name}". ${result.chats_ungrouped} chat(s) and ${result.documents_ungrouped} document(s) moved to Ungrouped.`
       )
     } catch {
       toast.error("Failed to delete group.")
@@ -442,8 +440,8 @@ function GroupSection({
                 <DialogHeader>
                   <DialogTitle>Delete &ldquo;{group.name}&rdquo;?</DialogTitle>
                   <DialogDescription>
-                    The group is removed, but its chats and documents are not deleted — they move
-                    to Ungrouped. This affects {chatCountPreview} chat(s)
+                    The group is removed, but its chats and documents are not deleted — they move to
+                    Ungrouped. This affects {chatCountPreview} chat(s)
                     {documentCountPreview !== undefined
                       ? ` and ${documentCountPreview} document(s)`
                       : " and any documents in this group"}
@@ -479,6 +477,7 @@ function GroupSection({
               key={conversation.id}
               id={conversation.id}
               title={conversation.title}
+              groupId={conversation.group_id}
               isActive={conversation.id === activeConversationId}
               onNavigate={onNavigate}
             />
@@ -532,6 +531,7 @@ function UngroupedSection({
               key={conversation.id}
               id={conversation.id}
               title={conversation.title}
+              groupId={conversation.group_id}
               isActive={conversation.id === activeConversationId}
               onNavigate={onNavigate}
             />
@@ -545,18 +545,55 @@ function UngroupedSection({
 interface ConversationItemProps {
   id: string
   title: string | null
+  groupId: string | null
   isActive: boolean
   onNavigate?: () => void
 }
 
-// Split out so each row owns its own delete-confirm dialog state independently
-// of its siblings (opening one row's dialog must not affect any other row).
-function ConversationItem({ id, title, isActive, onNavigate }: ConversationItemProps) {
+// Split out so each row owns its own rename/move/delete UI state independently
+// of its siblings (opening one row's menu or dialog must not affect any other row).
+function ConversationItem({ id, title, groupId, isActive, onNavigate }: ConversationItemProps) {
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(title ?? "")
   const [isConfirmOpen, setIsConfirmOpen] = useState(false)
   const navigate = useNavigate()
+  const groupsQuery = useGroups()
+  const updateConversation = useUpdateConversation()
   const deleteConversation = useDeleteConversation()
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (isRenaming) renameInputRef.current?.focus()
+  }, [isRenaming])
 
   const displayTitle = title ?? "New conversation"
+  const groups = groupsQuery.data ?? []
+
+  async function handleRenameSubmit() {
+    const trimmed = renameValue.trim()
+    if (!trimmed || trimmed === (title ?? "")) {
+      setIsRenaming(false)
+      setRenameValue(title ?? "")
+      return
+    }
+    try {
+      await updateConversation.mutateAsync({ id, title: trimmed })
+      setIsRenaming(false)
+    } catch {
+      toast.error("Failed to rename conversation.")
+    }
+  }
+
+  // `targetGroupId: null` moves the chat to Ungrouped — mirrors the PATCH
+  // body's group_id: null semantics (see useUpdateConversation).
+  async function handleMoveToGroup(targetGroupId: string | null) {
+    try {
+      await updateConversation.mutateAsync({ id, groupId: targetGroupId })
+      toast.success("Chat moved.")
+    } catch {
+      toast.error("Failed to move chat.")
+    }
+  }
 
   async function handleConfirmDelete() {
     try {
@@ -579,6 +616,33 @@ function ConversationItem({ id, title, isActive, onNavigate }: ConversationItemP
     }
   }
 
+  if (isRenaming) {
+    return (
+      <form
+        className="px-1"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void handleRenameSubmit()
+        }}
+      >
+        <Input
+          ref={renameInputRef}
+          value={renameValue}
+          onChange={(event) => setRenameValue(event.target.value)}
+          onBlur={() => void handleRenameSubmit()}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setRenameValue(title ?? "")
+              setIsRenaming(false)
+            }
+          }}
+          className="h-8 text-sm"
+          disabled={updateConversation.isPending}
+        />
+      </form>
+    )
+  }
+
   return (
     <div className="group/item relative">
       <NavLink
@@ -589,7 +653,7 @@ function ConversationItem({ id, title, isActive, onNavigate }: ConversationItemP
           "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
           isActive
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         )}
       >
         <span className="truncate" title={displayTitle}>
@@ -598,16 +662,50 @@ function ConversationItem({ id, title, isActive, onNavigate }: ConversationItemP
       </NavLink>
 
       <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Delete ${displayTitle}`}
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/item:opacity-100"
-          onClick={() => setIsConfirmOpen(true)}
-        >
-          <Trash2 className="size-3.5" aria-hidden="true" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`${displayTitle} options`}
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/item:opacity-100"
+            >
+              <MoreHorizontal className="size-3.5" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem
+              onSelect={() => {
+                setRenameValue(title ?? "")
+                setIsRenaming(true)
+              }}
+            >
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Move to</DropdownMenuLabel>
+            <DropdownMenuItem
+              disabled={groupId === null}
+              onSelect={() => void handleMoveToGroup(null)}
+            >
+              Ungrouped
+            </DropdownMenuItem>
+            {groups.map((group) => (
+              <DropdownMenuItem
+                key={group.id}
+                disabled={group.id === groupId}
+                onSelect={() => void handleMoveToGroup(group.id)}
+              >
+                {group.name}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => setIsConfirmOpen(true)}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete this conversation?</DialogTitle>
