@@ -63,6 +63,11 @@ services:
     # API's event loop.
     build: ./backend
     container_name: notes_rag_worker
+    # Without this, a crash or a Docker Desktop/host restart leaves the worker
+    # stopped indefinitely while `backend`'s own healthcheck-gated restart
+    # keeps it looking fine — uploads then silently pile up in "processing"
+    # with nothing consuming the queue (see 2026-08-11 incident).
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
