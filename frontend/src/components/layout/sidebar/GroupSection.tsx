@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react"
+import { useDroppable } from "@dnd-kit/core"
 import { MoreHorizontal } from "lucide-react"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -101,8 +103,19 @@ export function GroupSection({
   const chatCountPreview = conversations.length
   const documentCountPreview = documentsPreviewQuery.data?.length
 
+  // Drop target for moving a chat into this group by drag (see Sidebar's
+  // DndContext). Spans the whole section — header + chat list — not just
+  // the header, so dropping anywhere in the section works.
+  const { setNodeRef, isOver } = useDroppable({ id: group.id })
+
   return (
-    <div className="mt-2">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "mt-2 rounded-lg transition-colors",
+        isOver && "bg-sidebar-accent/60 ring-1 ring-sidebar-ring/50"
+      )}
+    >
       {rename.isEditing ? (
         <form
           className="px-1"
@@ -184,9 +197,9 @@ export function GroupSection({
       )}
 
       {!isCollapsed && (
-        <div className="mt-0.5 flex flex-col gap-1">
+        <div className="mt-0.5 flex flex-col gap-1 pl-4">
           {conversations.length === 0 && (
-            <p className="px-4 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
+            <p className="px-3 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
           )}
           {conversations.map((conversation) => (
             <ConversationItem

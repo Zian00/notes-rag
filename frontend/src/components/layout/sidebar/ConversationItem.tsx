@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
+import { useDraggable } from "@dnd-kit/core"
 import { MoreHorizontal } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -61,6 +62,17 @@ export function ConversationItem({
   const navigate = useNavigate()
   const updateConversation = useUpdateConversation()
   const deleteConversation = useDeleteConversation()
+
+  // Drag source for moving this chat into a group/Ungrouped section by drag
+  // (see Sidebar's DndContext for the drop side). `data.groupId` lets
+  // Sidebar's onDragEnd know the chat's CURRENT group without a separate
+  // lookup — attributes/listeners go on the row's outer wrapper below, not
+  // the NavLink, so plain clicks still navigate (PointerSensor requires
+  // moving past a distance threshold before a drag activates).
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id,
+    data: { groupId },
+  })
 
   const displayTitle = title ?? "New conversation"
 
@@ -135,7 +147,12 @@ export function ConversationItem({
   }
 
   return (
-    <div className="group/item relative">
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn("group/item relative", isDragging && "opacity-40")}
+    >
       <NavLink
         to={`/chat/${id}`}
         onClick={onNavigate}

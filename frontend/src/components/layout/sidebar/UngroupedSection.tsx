@@ -1,6 +1,9 @@
 import { useNavigate } from "react-router-dom"
+import { useDroppable } from "@dnd-kit/core"
+import { cn } from "@/lib/utils"
 import { SectionHeader } from "@/components/layout/sidebar/SectionHeader"
 import { ConversationItem } from "@/components/layout/sidebar/ConversationItem"
+import { UNGROUPED_SECTION_ID } from "@/components/layout/sidebar/constants"
 import type { components } from "@/api/schema"
 
 type ConversationResponse = components["schemas"]["ConversationResponse"]
@@ -28,13 +31,24 @@ export function UngroupedSection({
 }: UngroupedSectionProps) {
   const navigate = useNavigate()
 
+  // Drop target for ungrouping a chat by drag — see GroupSection's identical
+  // pattern and Sidebar's DndContext. group_id: null is the ungroup case,
+  // routed through Sidebar's onDragEnd via this shared sentinel id.
+  const { setNodeRef, isOver } = useDroppable({ id: UNGROUPED_SECTION_ID })
+
   function handleNewChat() {
     navigate("/chat", { state: { newChatNonce: crypto.randomUUID() } })
     onNavigate?.()
   }
 
   return (
-    <div className="mt-2">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "mt-2 rounded-lg transition-colors",
+        isOver && "bg-sidebar-accent/60 ring-1 ring-sidebar-ring/50"
+      )}
+    >
       <SectionHeader
         title="Ungrouped"
         isCollapsed={isCollapsed}
@@ -42,9 +56,9 @@ export function UngroupedSection({
         onNewChat={handleNewChat}
       />
       {!isCollapsed && (
-        <div className="mt-0.5 flex flex-col gap-1">
+        <div className="mt-0.5 flex flex-col gap-1 pl-4">
           {conversations.length === 0 && (
-            <p className="px-4 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
+            <p className="px-3 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
           )}
           {conversations.map((conversation) => (
             <ConversationItem
