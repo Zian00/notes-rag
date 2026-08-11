@@ -1,15 +1,11 @@
 import uuid
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
+from app.db.sentinels import UNSET
 from app.models.document import Document
-
-# Sentinel distinguishing "field omitted" from "field set to None" in partial updates —
-# None is a real value for group_id (ungroup), so it can't double as "leave unchanged".
-UNSET: Any = object()
 
 
 class DocumentRepository(BaseRepository[Document]):

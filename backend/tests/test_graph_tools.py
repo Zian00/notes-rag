@@ -34,9 +34,7 @@ def _vec(slot: int) -> list[float]:
     return v
 
 
-async def _seed_user_and_doc(
-    session: AsyncSession, course: str | None = None
-) -> tuple[User, Document]:
+async def _seed_user_and_doc(session: AsyncSession) -> tuple[User, Document]:
     """Create a user and one document, return both."""
     user = await UserRepository(session).create(
         email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
@@ -45,7 +43,6 @@ async def _seed_user_and_doc(
         user_id=user.id,
         filename="notes.pdf",
         title="Lecture Notes",
-        course=course,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/notes.pdf",
@@ -138,7 +135,7 @@ async def test_list_documents_scoped(_engine: AsyncEngine) -> None:
     """list_documents returns only documents owned by the requesting user."""
     maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
     async with maker() as session:
-        user_a, doc_a = await _seed_user_and_doc(session, course="CS101")
+        user_a, doc_a = await _seed_user_and_doc(session)
         user_b, _doc_b = await _seed_user_and_doc(session)
 
     tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)

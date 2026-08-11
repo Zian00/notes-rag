@@ -25,11 +25,10 @@ class Document(Base):
     )
     filename: Mapped[str] = mapped_column(String(512))
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    course: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Group this document belongs to; NULL = ungrouped. SET NULL so deleting a
     # group orphans its documents to ungrouped rather than deleting them.
-    # (Superseding `course` above; `course` is dropped in a later contract migration
-    # once no code references it — see the groups design doc.)
+    # Superseded the old free-text `course` column, dropped in migration 0009
+    # once no code referenced it anymore — see the groups design doc.
     group_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("groups.id", ondelete="SET NULL"), index=True, nullable=True
     )

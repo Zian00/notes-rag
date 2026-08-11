@@ -17,7 +17,7 @@ def _vec(slot: int) -> list[float]:
     return v
 
 
-async def _user_and_doc(db_session, course=None):
+async def _user_and_doc(db_session):
     user = await UserRepository(db_session).create(
         email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
     )
@@ -25,7 +25,6 @@ async def _user_and_doc(db_session, course=None):
         user_id=user.id,
         filename="a.pdf",
         title="Lecture A",
-        course=course,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/a",

@@ -31,6 +31,18 @@ from app.utils.files import sanitize_filename, sniff_content_type
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+def _present_kwargs(**fields: tuple[bool, object]) -> dict:
+    """Build a kwargs dict from (included, value) pairs, keeping only included fields.
+
+    Shared by update_document and replace_document below — both need to forward
+    only the metadata fields the client actually provided (an omitted field must
+    stay untouched, not get overwritten with a default), just via two different
+    "was this provided" checks (Pydantic's model_fields_set for JSON PATCH bodies
+    vs. plain not-None for multipart form fields, which can't express "explicit null").
+    """
+    return {name: value for name, (included, value) in fields.items() if included}
+
+
 @router.post(
     "",
     response_model=DocumentResponse,
@@ -94,7 +106,14 @@ async def list_documents(
     group_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),  # noqa: B008
     session: AsyncSession = Depends(get_db),  # noqa: B008
+    document_service: DocumentService = Depends(get_document_service),  # noqa: B008
 ) -> list[DocumentResponse]:
+    # Same validation as upload/PATCH: a foreign/nonexistent group_id 404s here too,
+    # rather than silently returning an empty list.
+    try:
+        await document_service.ensure_group_owned(group_id, current_user.id)
+    except GroupNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
     docs = await DocumentRepository(session).list_for_user(current_user.id, group_id=group_id)
     return [DocumentResponse.model_validate(d) for d in docs]
 
@@ -108,11 +127,10 @@ async def update_document(
 ) -> DocumentResponse:
     # Forward only fields the client sent — model_fields_set keeps an omitted
     # group_id (leave as-is) distinct from an explicit null (ungroup).
-    kwargs: dict = {}
-    if "group_id" in body.model_fields_set:
-        kwargs["group_id"] = body.group_id
-    if "tags" in body.model_fields_set:
-        kwargs["tags"] = body.tags
+    kwargs = _present_kwargs(
+        group_id=("group_id" in body.model_fields_set, body.group_id),
+        tags=("tags" in body.model_fields_set, body.tags),
+    )
     try:
         doc = await document_service.update_metadata(document_id, current_user.id, **kwargs)
     except DocumentNotFound:
@@ -127,6 +145,11 @@ async def replace_document(
     document_id: uuid.UUID,
     file: UploadFile = File(...),  # noqa: B008
     group_id: uuid.UUID | None = Form(default=None),  # noqa: B008
+    # Multipart form fields can't express "explicit null" the way a JSON PATCH
+    # body can (an omitted field and an empty one look the same), so clearing
+    # the group on replace needs its own explicit flag rather than overloading
+    # group_id=None to mean "ungroup" (which would collide with "not provided").
+    ungroup: bool = Form(default=False),  # noqa: B008
     tags: list[str] | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     session: AsyncSession = Depends(get_db),  # noqa: B008
@@ -134,6 +157,11 @@ async def replace_document(
     document_service: DocumentService = Depends(get_document_service),  # noqa: B008
     enqueue: Callable[[uuid.UUID, str, str, int], Awaitable[None]] = Depends(get_enqueue_replace),  # noqa: B008
 ) -> ReplaceDocumentResponse:
+    if group_id is not None and ungroup:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Cannot both set group_id and ungroup"
+        )
+
     # Ownership check up front — a missing OR not-yours id both 404, same pattern
     # as delete_document below.
     existing = await DocumentRepository(session).get_for_user(document_id, current_user.id)
@@ -144,15 +172,14 @@ async def replace_document(
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
 
-    # Optional metadata edit alongside the file swap. Multipart form can't express
-    # "explicit null", so a provided group_id/tags is applied and omission leaves it
-    # unchanged; ungrouping specifically goes through PATCH /documents/{id}.
-    if group_id is not None or tags is not None:
-        meta_kwargs: dict = {}
-        if group_id is not None:
-            meta_kwargs["group_id"] = group_id
-        if tags is not None:
-            meta_kwargs["tags"] = tags
+    # Optional metadata edit alongside the file swap. group_id is included when
+    # either a new group was provided or `ungroup` explicitly asked to clear it;
+    # omitting both leaves the current group untouched.
+    meta_kwargs = _present_kwargs(
+        group_id=(group_id is not None or ungroup, None if ungroup else group_id),
+        tags=(tags is not None, tags),
+    )
+    if meta_kwargs:
         try:
             await document_service.update_metadata(document_id, current_user.id, **meta_kwargs)
         except GroupNotFound:

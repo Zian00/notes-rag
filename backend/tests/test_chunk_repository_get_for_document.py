@@ -21,9 +21,7 @@ def _vec(slot: int) -> list[float]:
     return v
 
 
-async def _user_and_doc(
-    session: AsyncSession, course: str | None = None
-) -> tuple[User, Document]:
+async def _user_and_doc(session: AsyncSession) -> tuple[User, Document]:
     user = await UserRepository(session).create(
         email=f"u-{uuid.uuid4().hex}@e.com", hashed_password="x"
     )
@@ -31,7 +29,6 @@ async def _user_and_doc(
         user_id=user.id,
         filename="lecture.pdf",
         title="Lecture Notes",
-        course=course,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/lecture.pdf",

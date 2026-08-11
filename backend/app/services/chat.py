@@ -16,8 +16,9 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.db.repositories.conversation import UNSET, ConversationRepository
+from app.db.repositories.conversation import ConversationRepository
 from app.db.repositories.group import GroupRepository
+from app.db.sentinels import UNSET
 from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, new_turn_inputs
 from app.services.citations import to_citations
 from app.services.group import GroupNotFound

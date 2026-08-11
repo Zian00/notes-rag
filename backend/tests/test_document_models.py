@@ -18,7 +18,7 @@ def test_document_optional_fields_default_none():
     )
     assert doc.filename == "lecture3.pdf"
     assert doc.title is None
-    assert doc.course is None
+    assert doc.group_id is None
     assert doc.page_count is None
 
 

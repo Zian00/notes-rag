@@ -37,7 +37,6 @@ async def _seed_doc(session: AsyncSession, user_id: uuid.UUID) -> None:
         user_id=user_id,
         filename="notes.pdf",
         title="Lecture Notes",
-        course=None,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/notes.pdf",

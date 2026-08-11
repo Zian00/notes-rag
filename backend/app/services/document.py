@@ -9,8 +9,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.repositories.document import UNSET, DocumentRepository
+from app.db.repositories.document import DocumentRepository
 from app.db.repositories.group import GroupRepository
+from app.db.sentinels import UNSET
 from app.models.document import Document
 from app.services.group import GroupNotFound
 

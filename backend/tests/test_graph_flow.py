@@ -57,7 +57,6 @@ async def _seed_user_and_doc(session: AsyncSession) -> tuple[Any, Any]:
         user_id=user.id,
         filename="notes.pdf",
         title="Lecture Notes",
-        course=None,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/notes.pdf",

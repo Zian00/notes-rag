@@ -207,6 +207,33 @@ async def test_document_group_must_belong_to_user(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_list_documents_group_filter_must_belong_to_user(auth_client):
+    """GET /documents?group_id=<foreign or nonexistent> 404s instead of silently
+    returning an empty list, same validation as upload/PATCH."""
+    token_a = auth_client.headers["Authorization"]
+
+    b_email = f"docs-list-b-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+    b_gid = (await auth_client.post("/groups", json={"name": "B-list-group"})).json()["id"]
+
+    auth_client.headers["Authorization"] = token_a
+    assert (await auth_client.get(f"/documents?group_id={b_gid}")).status_code == 404
+    assert (
+        await auth_client.get(f"/documents?group_id={uuid.uuid4()}")
+    ).status_code == 404
+
+    # A's own group filters normally (no false positive from the ownership check).
+    a_gid = (await auth_client.post("/groups", json={"name": "A-list-group"})).json()["id"]
+    resp = await auth_client.get(f"/documents?group_id={a_gid}")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
 async def test_patch_document_not_owned_404(auth_client):
     """User B cannot PATCH user A's document."""
     files = {"file": ("n.txt", b"hello world", "text/plain")}
@@ -271,6 +298,51 @@ async def test_replace_with_new_content_enqueues_processing(auth_client):
     assert enqueued[0][0] == document_id
 
     auth_client.app.dependency_overrides.pop(deps.get_enqueue_replace, None)
+
+
+@pytest.mark.asyncio
+async def test_replace_can_ungroup_via_explicit_flag(auth_client):
+    """Multipart form fields can't express "explicit null" like a JSON PATCH body
+    can, so clearing a document's group on /replace needs its own `ungroup` flag
+    rather than overloading group_id=None (which just means "not provided")."""
+    # Identical content short-circuits before enqueueing a background job (see
+    # test_replace_with_identical_content_short_circuits) — irrelevant to what's
+    # under test here (the metadata update, which happens before that check).
+    _enqueue_synchronously(auth_client)
+    gid = (await auth_client.post("/groups", json={"name": "Ungroup-me"})).json()["id"]
+    upload = await auth_client.post(
+        "/documents",
+        files={"file": ("notes.txt", b"same content", "text/plain")},
+        data={"group_id": gid},
+    )
+    document_id = upload.json()["id"]
+    assert upload.json()["group_id"] == gid
+
+    r = await auth_client.post(
+        f"/documents/{document_id}/replace",
+        files={"file": ("notes.txt", b"same content", "text/plain")},
+        data={"ungroup": "true"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["document"]["group_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_replace_rejects_group_id_and_ungroup_together(auth_client):
+    gid = (await auth_client.post("/groups", json={"name": "Conflict"})).json()["id"]
+    upload = await auth_client.post(
+        "/documents", files={"file": ("notes.txt", b"content", "text/plain")}
+    )
+    document_id = upload.json()["id"]
+
+    r = await auth_client.post(
+        f"/documents/{document_id}/replace",
+        files={"file": ("notes.txt", b"changed content", "text/plain")},
+        data={"group_id": gid, "ungroup": "true"},
+    )
+
+    assert r.status_code == 400
 
 
 @pytest.mark.asyncio

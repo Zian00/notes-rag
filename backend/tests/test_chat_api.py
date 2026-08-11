@@ -39,7 +39,6 @@ async def _seed_user_doc_chunk(session: AsyncSession, user_id: uuid.UUID) -> Non
         user_id=user_id,
         filename="notes.pdf",
         title="Lecture Notes",
-        course=None,
         content_type="application/pdf",
         content_hash=uuid.uuid4().hex,
         storage_path="/tmp/notes.pdf",

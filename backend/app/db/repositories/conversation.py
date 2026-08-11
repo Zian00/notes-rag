@@ -5,11 +5,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.base import BaseRepository
+from app.db.sentinels import UNSET
 from app.models.conversation import Conversation
-
-# Sentinel distinguishing "field omitted" from "field set to None" in partial updates —
-# None is a real value for group_id (ungroup), so it can't double as "leave unchanged".
-UNSET: Any = object()
 
 
 class ConversationRepository(BaseRepository[Conversation]):

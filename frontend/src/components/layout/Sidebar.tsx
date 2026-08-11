@@ -1,41 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState } from "react"
 import { NavLink, useNavigate, useParams } from "react-router-dom"
-import { ChevronDown, FileText, LogOut, MessageSquare, MoreHorizontal, Plus } from "lucide-react"
+import { FileText, LogOut, MessageSquare, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/auth/useAuth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  useConversations,
-  useDeleteConversation,
-  useUpdateConversation,
-} from "@/api/hooks/useConversations"
-import { useCreateGroup, useDeleteGroup, useGroups, useRenameGroup } from "@/api/hooks/useGroups"
-import { $api } from "@/api/client"
-import { DeleteError } from "@/api/deleteError"
+import { useConversations } from "@/api/hooks/useConversations"
+import { useCreateGroup, useGroups } from "@/api/hooks/useGroups"
+import { useInlineEdit } from "@/hooks/useInlineEdit"
 import { ThemeToggle } from "@/components/layout/ThemeToggle"
+import { GroupSection } from "@/components/layout/sidebar/GroupSection"
+import { UngroupedSection } from "@/components/layout/sidebar/UngroupedSection"
 import type { components } from "@/api/schema"
 
 type ConversationResponse = components["schemas"]["ConversationResponse"]
-type GroupResponse = components["schemas"]["GroupResponse"]
 
 const NAV_ITEMS = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
@@ -59,16 +39,13 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const conversationsQuery = useConversations()
   const groupsQuery = useGroups()
   const createGroup = useCreateGroup()
+  const groupCreate = useInlineEdit()
+  const groupCreateInputRef = useRef<HTMLInputElement>(null)
 
-  const [isCreatingGroup, setIsCreatingGroup] = useState(false)
-  const [newGroupName, setNewGroupName] = useState("")
-  const newGroupInputRef = useRef<HTMLInputElement>(null)
-
-  // Focus via ref/effect rather than the `autoFocus` prop (a11y lint forbids it) —
-  // fires only when the inline create form actually opens.
   useEffect(() => {
-    if (isCreatingGroup) newGroupInputRef.current?.focus()
-  }, [isCreatingGroup])
+    if (groupCreate.isEditing) groupCreateInputRef.current?.focus()
+  }, [groupCreate.isEditing])
+
   // Collapsed section ids (group id, or UNGROUPED_SECTION_ID) — absence from
   // this set means expanded, so a brand-new group starts expanded by default.
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set())
@@ -105,12 +82,11 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   }
 
   async function handleCreateGroup() {
-    const name = newGroupName.trim()
+    const name = groupCreate.value.trim()
     if (!name) return
     try {
       await createGroup.mutateAsync(name)
-      setNewGroupName("")
-      setIsCreatingGroup(false)
+      groupCreate.close()
     } catch {
       toast.error("Failed to create group.")
     }
@@ -178,13 +154,13 @@ export function Sidebar({ onNavigate }: SidebarProps) {
             variant="ghost"
             size="icon-xs"
             aria-label="New group"
-            onClick={() => setIsCreatingGroup(true)}
+            onClick={() => groupCreate.open()}
           >
             <Plus className="size-3.5" aria-hidden="true" />
           </Button>
         </div>
 
-        {isCreatingGroup && (
+        {groupCreate.isEditing && (
           <form
             className="px-3 pb-1"
             onSubmit={(event) => {
@@ -193,17 +169,14 @@ export function Sidebar({ onNavigate }: SidebarProps) {
             }}
           >
             <Input
-              ref={newGroupInputRef}
-              value={newGroupName}
-              onChange={(event) => setNewGroupName(event.target.value)}
+              ref={groupCreateInputRef}
+              value={groupCreate.value}
+              onChange={(event) => groupCreate.setValue(event.target.value)}
               onBlur={() => {
-                if (!newGroupName.trim()) setIsCreatingGroup(false)
+                if (!groupCreate.value.trim()) groupCreate.close()
               }}
               onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setNewGroupName("")
-                  setIsCreatingGroup(false)
-                }
+                if (event.key === "Escape") groupCreate.close()
               }}
               placeholder="Group name"
               className="h-8 text-sm"
@@ -226,6 +199,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               key={group.id}
               group={group}
               conversations={conversationsByGroup.get(group.id) ?? []}
+              groups={groups}
               activeConversationId={activeConversationId}
               isCollapsed={collapsedSectionIds.has(group.id)}
               onToggle={() => toggleSection(group.id)}
@@ -237,6 +211,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         {!isLoading && (
           <UngroupedSection
             conversations={ungroupedConversations}
+            groups={groups}
             activeConversationId={activeConversationId}
             isCollapsed={collapsedSectionIds.has(UNGROUPED_SECTION_ID)}
             onToggle={() => toggleSection(UNGROUPED_SECTION_ID)}
@@ -261,473 +236,6 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           Log out
         </Button>
       </div>
-    </div>
-  )
-}
-
-interface SectionHeaderProps {
-  title: string
-  isCollapsed: boolean
-  onToggle: () => void
-  onNewChat: () => void
-  menu?: ReactNode
-}
-
-function SectionHeader({ title, isCollapsed, onToggle, onNewChat, menu }: SectionHeaderProps) {
-  return (
-    <div className="group/section flex items-center gap-1 px-1">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!isCollapsed}
-        className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50"
-      >
-        <ChevronDown
-          className={cn("size-3.5 shrink-0 transition-transform", isCollapsed && "-rotate-90")}
-          aria-hidden="true"
-        />
-        <span className="truncate">{title}</span>
-      </button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Start chat in ${title}`}
-        className="opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100"
-        onClick={onNewChat}
-      >
-        <Plus className="size-3.5" aria-hidden="true" />
-      </Button>
-      {menu}
-    </div>
-  )
-}
-
-interface GroupSectionProps {
-  group: GroupResponse
-  conversations: ConversationResponse[]
-  activeConversationId: string | undefined
-  isCollapsed: boolean
-  onToggle: () => void
-  onNewChat: () => void
-  onNavigate?: () => void
-}
-
-// Owns its own rename/delete UI state independently of sibling sections —
-// opening one group's rename input or delete-confirm dialog must not affect
-// any other group's.
-function GroupSection({
-  group,
-  conversations,
-  activeConversationId,
-  isCollapsed,
-  onToggle,
-  onNewChat,
-  onNavigate,
-}: GroupSectionProps) {
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [renameValue, setRenameValue] = useState(group.name)
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false)
-  const renameGroup = useRenameGroup()
-  const deleteGroup = useDeleteGroup()
-  const renameInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (isRenaming) renameInputRef.current?.focus()
-  }, [isRenaming])
-
-  // Fetched only while the delete-confirm dialog is open — this is a
-  // best-effort preview count for the confirmation copy, not a proactive
-  // background subscription; the backend's DELETE response (used for the
-  // success toast) is the source of truth.
-  const documentsPreviewQuery = $api.useQuery(
-    "get",
-    "/documents",
-    { params: { query: { group_id: group.id } } },
-    { enabled: isConfirmOpen }
-  )
-
-  async function handleRenameSubmit() {
-    const name = renameValue.trim()
-    if (!name || name === group.name) {
-      setIsRenaming(false)
-      setRenameValue(group.name)
-      return
-    }
-    try {
-      await renameGroup.mutateAsync({ groupId: group.id, name })
-      setIsRenaming(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to rename group.")
-    }
-  }
-
-  async function handleConfirmDelete() {
-    try {
-      const result = await deleteGroup.mutateAsync(group.id)
-      setIsConfirmOpen(false)
-      toast.success(
-        `Deleted "${group.name}". ${result.chats_ungrouped} chat(s) and ${result.documents_ungrouped} document(s) moved to Ungrouped.`
-      )
-    } catch {
-      toast.error("Failed to delete group.")
-    }
-  }
-
-  const chatCountPreview = conversations.length
-  const documentCountPreview = documentsPreviewQuery.data?.length
-
-  return (
-    <div className="mt-2">
-      {isRenaming ? (
-        <form
-          className="px-1"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void handleRenameSubmit()
-          }}
-        >
-          <Input
-            ref={renameInputRef}
-            value={renameValue}
-            onChange={(event) => setRenameValue(event.target.value)}
-            onBlur={() => void handleRenameSubmit()}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setRenameValue(group.name)
-                setIsRenaming(false)
-              }
-            }}
-            className="h-7 text-xs"
-            disabled={renameGroup.isPending}
-          />
-        </form>
-      ) : (
-        <SectionHeader
-          title={group.name}
-          isCollapsed={isCollapsed}
-          onToggle={onToggle}
-          onNewChat={onNewChat}
-          menu={
-            <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`${group.name} options`}
-                    className="opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100"
-                  >
-                    <MoreHorizontal className="size-3.5" aria-hidden="true" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      setRenameValue(group.name)
-                      setIsRenaming(true)
-                    }}
-                  >
-                    Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuItem variant="destructive" onSelect={() => setIsConfirmOpen(true)}>
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Delete &ldquo;{group.name}&rdquo;?</DialogTitle>
-                  <DialogDescription>
-                    The group is removed, but its chats and documents are not deleted — they move to
-                    Ungrouped. This affects {chatCountPreview} chat(s)
-                    {documentCountPreview !== undefined
-                      ? ` and ${documentCountPreview} document(s)`
-                      : " and any documents in this group"}
-                    .
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsConfirmOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => void handleConfirmDelete()}
-                    disabled={deleteGroup.isPending}
-                  >
-                    {deleteGroup.isPending ? "Deleting…" : "Delete"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          }
-        />
-      )}
-
-      {!isCollapsed && (
-        <div className="mt-0.5 flex flex-col gap-1">
-          {conversations.length === 0 && (
-            <p className="px-4 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
-          )}
-          {conversations.map((conversation) => (
-            <ConversationItem
-              key={conversation.id}
-              id={conversation.id}
-              title={conversation.title}
-              groupId={conversation.group_id}
-              isActive={conversation.id === activeConversationId}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface UngroupedSectionProps {
-  conversations: ConversationResponse[]
-  activeConversationId: string | undefined
-  isCollapsed: boolean
-  onToggle: () => void
-  onNavigate?: () => void
-}
-
-// The Ungrouped section always exists (it's where every chat starts and where
-// a deleted group's chats land) — unlike a real group it has no rename/delete,
-// so it doesn't need GroupSection's mutation/dialog machinery at all.
-function UngroupedSection({
-  conversations,
-  activeConversationId,
-  isCollapsed,
-  onToggle,
-  onNavigate,
-}: UngroupedSectionProps) {
-  const navigate = useNavigate()
-
-  function handleNewChat() {
-    navigate("/chat", { state: { newChatNonce: crypto.randomUUID() } })
-    onNavigate?.()
-  }
-
-  return (
-    <div className="mt-2">
-      <SectionHeader
-        title="Ungrouped"
-        isCollapsed={isCollapsed}
-        onToggle={onToggle}
-        onNewChat={handleNewChat}
-      />
-      {!isCollapsed && (
-        <div className="mt-0.5 flex flex-col gap-1">
-          {conversations.length === 0 && (
-            <p className="px-4 py-1 text-xs text-sidebar-foreground/50">No chats here yet.</p>
-          )}
-          {conversations.map((conversation) => (
-            <ConversationItem
-              key={conversation.id}
-              id={conversation.id}
-              title={conversation.title}
-              groupId={conversation.group_id}
-              isActive={conversation.id === activeConversationId}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface ConversationItemProps {
-  id: string
-  title: string | null
-  groupId: string | null
-  isActive: boolean
-  onNavigate?: () => void
-}
-
-// Split out so each row owns its own rename/move/delete UI state independently
-// of its siblings (opening one row's menu or dialog must not affect any other row).
-function ConversationItem({ id, title, groupId, isActive, onNavigate }: ConversationItemProps) {
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [renameValue, setRenameValue] = useState(title ?? "")
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false)
-  const navigate = useNavigate()
-  const groupsQuery = useGroups()
-  const updateConversation = useUpdateConversation()
-  const deleteConversation = useDeleteConversation()
-  const renameInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (isRenaming) renameInputRef.current?.focus()
-  }, [isRenaming])
-
-  const displayTitle = title ?? "New conversation"
-  const groups = groupsQuery.data ?? []
-
-  async function handleRenameSubmit() {
-    const trimmed = renameValue.trim()
-    if (!trimmed || trimmed === (title ?? "")) {
-      setIsRenaming(false)
-      setRenameValue(title ?? "")
-      return
-    }
-    try {
-      await updateConversation.mutateAsync({ id, title: trimmed })
-      setIsRenaming(false)
-    } catch {
-      toast.error("Failed to rename conversation.")
-    }
-  }
-
-  // `targetGroupId: null` moves the chat to Ungrouped — mirrors the PATCH
-  // body's group_id: null semantics (see useUpdateConversation).
-  async function handleMoveToGroup(targetGroupId: string | null) {
-    try {
-      await updateConversation.mutateAsync({ id, groupId: targetGroupId })
-      toast.success("Chat moved.")
-    } catch {
-      toast.error("Failed to move chat.")
-    }
-  }
-
-  async function handleConfirmDelete() {
-    try {
-      await deleteConversation.mutateAsync(id)
-      toast.success("Conversation deleted.")
-      setIsConfirmOpen(false)
-      // The conversation the user is currently viewing was just removed —
-      // navigating away avoids showing a dead thread for a now-gone id.
-      if (isActive) {
-        navigate("/chat")
-      }
-    } catch (error) {
-      if (error instanceof DeleteError && error.status === 404) {
-        toast.info("This conversation was already removed.")
-        setIsConfirmOpen(false)
-        if (isActive) navigate("/chat")
-        return
-      }
-      toast.error("Failed to delete conversation. Please try again.")
-    }
-  }
-
-  if (isRenaming) {
-    return (
-      <form
-        className="px-1"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void handleRenameSubmit()
-        }}
-      >
-        <Input
-          ref={renameInputRef}
-          value={renameValue}
-          onChange={(event) => setRenameValue(event.target.value)}
-          onBlur={() => void handleRenameSubmit()}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setRenameValue(title ?? "")
-              setIsRenaming(false)
-            }
-          }}
-          className="h-8 text-sm"
-          disabled={updateConversation.isPending}
-        />
-      </form>
-    )
-  }
-
-  return (
-    <div className="group/item relative">
-      <NavLink
-        to={`/chat/${id}`}
-        onClick={onNavigate}
-        className={cn(
-          "flex items-center gap-2 rounded-lg px-3 py-2 pr-8 text-sm transition-colors",
-          "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
-          isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
-      >
-        <span className="truncate" title={displayTitle}>
-          {displayTitle}
-        </span>
-      </NavLink>
-
-      <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`${displayTitle} options`}
-              className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/item:opacity-100"
-            >
-              <MoreHorizontal className="size-3.5" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem
-              onSelect={() => {
-                setRenameValue(title ?? "")
-                setIsRenaming(true)
-              }}
-            >
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Move to</DropdownMenuLabel>
-            <DropdownMenuItem
-              disabled={groupId === null}
-              onSelect={() => void handleMoveToGroup(null)}
-            >
-              Ungrouped
-            </DropdownMenuItem>
-            {groups.map((group) => (
-              <DropdownMenuItem
-                key={group.id}
-                disabled={group.id === groupId}
-                onSelect={() => void handleMoveToGroup(group.id)}
-              >
-                {group.name}
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => setIsConfirmOpen(true)}>
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete this conversation?</DialogTitle>
-            <DialogDescription>
-              This removes &ldquo;{displayTitle}&rdquo; and its messages. This can&apos;t be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setIsConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleConfirmDelete()}
-              disabled={deleteConversation.isPending}
-            >
-              {deleteConversation.isPending ? "Deleting…" : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

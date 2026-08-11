@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent } from "react"
+import { useEffect, useId, useRef, type ChangeEvent } from "react"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useCreateGroup, useGroups } from "@/api/hooks/useGroups"
+import { useInlineEdit } from "@/hooks/useInlineEdit"
 
 // Sentinel <option> values distinct from any real group UUID — never sent to
 // the backend, only used to interpret the native <select>'s onChange.
@@ -37,43 +38,41 @@ export function GroupSelect({
 }: GroupSelectProps) {
   const groupsQuery = useGroups()
   const createGroup = useCreateGroup()
-  const [isCreating, setIsCreating] = useState(false)
-  const [newGroupName, setNewGroupName] = useState("")
+  const create = useInlineEdit()
+  const createInputRef = useRef<HTMLInputElement>(null)
   const selectId = useId()
-  const newGroupInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (isCreating) newGroupInputRef.current?.focus()
-  }, [isCreating])
+    if (create.isEditing) createInputRef.current?.focus()
+  }, [create.isEditing])
 
   const groups = groupsQuery.data ?? []
 
   function handleSelectChange(event: ChangeEvent<HTMLSelectElement>) {
     const raw = event.target.value
     if (raw === NEW_GROUP_VALUE) {
-      setIsCreating(true)
+      create.open()
       return
     }
     onChange(raw === NONE_VALUE ? null : raw)
   }
 
   async function handleCreateSubmit() {
-    const name = newGroupName.trim()
+    const name = create.value.trim()
     if (!name) {
-      setIsCreating(false)
+      create.close()
       return
     }
     try {
       const group = await createGroup.mutateAsync(name)
       onChange(group.id)
-      setNewGroupName("")
-      setIsCreating(false)
+      create.close()
     } catch {
       toast.error("Failed to create group.")
     }
   }
 
-  if (isCreating) {
+  if (create.isEditing) {
     return (
       <div className={cn("flex flex-col gap-1.5", className)}>
         <Label htmlFor={selectId} className={cn(hideLabel && "sr-only")}>
@@ -87,15 +86,12 @@ export function GroupSelect({
         >
           <Input
             id={selectId}
-            ref={newGroupInputRef}
-            value={newGroupName}
-            onChange={(event) => setNewGroupName(event.target.value)}
+            ref={createInputRef}
+            value={create.value}
+            onChange={(event) => create.setValue(event.target.value)}
             onBlur={() => void handleCreateSubmit()}
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setNewGroupName("")
-                setIsCreating(false)
-              }
+              if (event.key === "Escape") create.close()
             }}
             placeholder="Group name"
             disabled={createGroup.isPending}
