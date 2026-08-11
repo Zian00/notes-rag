@@ -93,7 +93,7 @@ export function UploadDropzone({ file, onFileSelect, disabled = false }: UploadD
         "hover:border-primary hover:bg-accent",
         "has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/50",
         isDragOver && "border-primary bg-accent",
-        disabled && "pointer-events-none opacity-50",
+        disabled && "pointer-events-none opacity-50"
       )}
     >
       <UploadCloud className="size-6 text-muted-foreground" aria-hidden="true" />

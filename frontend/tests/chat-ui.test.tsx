@@ -1062,4 +1062,134 @@ describe("Chat attach", () => {
     // Still processing — sending didn't wait for the attachment to finish.
     expect(screen.getByText(/processing/i)).toBeInTheDocument()
   })
+
+  it("attaching in a grouped chat uploads straight into it, with no group-assignment popover", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/conversations/${groupedConvo.id}`, () =>
+        HttpResponse.json(groupedConvoDetail)
+      ),
+      http.get(`${API_BASE}/documents`, () =>
+        HttpResponse.json([{ ...uploadedDoc, group_id: attachGroup.id }])
+      ),
+      http.post(`${API_BASE}/documents`, () =>
+        HttpResponse.json({ ...uploadedDoc, group_id: attachGroup.id }, { status: 201 })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderApp([`/chat/${groupedConvo.id}`])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    await screen.findByText("notes.pdf")
+    expect(screen.queryByText(/add to a group/i)).not.toBeInTheDocument()
+  })
+
+  it("attaching in an ungrouped chat shows a group-assignment popover with None/groups/+New-group options", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([attachGroup])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(uploadedDoc, { status: 201 }))
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    expect(await screen.findByText(/add to a group/i)).toBeInTheDocument()
+    const select = screen.getByRole("combobox")
+    expect(within(select).getByRole("option", { name: "None" })).toBeInTheDocument()
+    expect(within(select).getByRole("option", { name: attachGroup.name })).toBeInTheDocument()
+    expect(within(select).getByRole("option", { name: /new group/i })).toBeInTheDocument()
+  })
+
+  it("choosing a group in the popover moves the just-attached document into it", async () => {
+    mockAuthed()
+    let patchedBody: unknown
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([attachGroup])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(uploadedDoc, { status: 201 })),
+      http.patch(`${API_BASE}/documents/${uploadedDoc.id}`, async ({ request }) => {
+        patchedBody = await request.json()
+        return HttpResponse.json({ ...uploadedDoc, group_id: attachGroup.id })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    await screen.findByText(/add to a group/i)
+    await user.selectOptions(screen.getByRole("combobox"), attachGroup.name)
+
+    await waitFor(() => expect(patchedBody).toEqual({ group_id: attachGroup.id }))
+    expect(screen.queryByText(/add to a group/i)).not.toBeInTheDocument()
+  })
+
+  it("dismissing the popover without picking a group leaves the attachment ungrouped", async () => {
+    mockAuthed()
+    let patchWasCalled = false
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([attachGroup])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(uploadedDoc, { status: 201 })),
+      http.patch(`${API_BASE}/documents/${uploadedDoc.id}`, () => {
+        patchWasCalled = true
+        return HttpResponse.json(uploadedDoc)
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    await screen.findByText(/add to a group/i)
+    await user.keyboard("{Escape}")
+
+    expect(screen.queryByText(/add to a group/i)).not.toBeInTheDocument()
+    expect(patchWasCalled).toBe(false)
+  })
+
+  it("re-shows the group-assignment popover on a second attach in the same still-ungrouped chat", async () => {
+    mockAuthed()
+    const secondDoc: DocumentResponse = {
+      ...uploadedDoc,
+      id: "88888888-8888-8888-8888-888888888888",
+      filename: "second.pdf",
+    }
+    let documentsState: DocumentResponse[] = []
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([attachGroup])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json(documentsState)),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        const filename = (form.get("file") as File).name
+        const doc = filename === "second.pdf" ? secondDoc : uploadedDoc
+        documentsState = [...documentsState, doc]
+        return HttpResponse.json(doc, { status: 201 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+    await screen.findByText(/add to a group/i)
+    await user.keyboard("{Escape}")
+    expect(screen.queryByText(/add to a group/i)).not.toBeInTheDocument()
+
+    await user.upload(fileInput, selectAttachFile("second.pdf"))
+    expect(await screen.findByText(/add to a group/i)).toBeInTheDocument()
+  })
 })

@@ -113,8 +113,8 @@ export function ChatPage() {
   // `conversationId` is set and the first branch takes over.
   const attachGroupId: string | null =
     conversationId !== undefined
-      ? conversationQuery.data?.group_id ?? null
-      : locationState?.groupId ?? null
+      ? (conversationQuery.data?.group_id ?? null)
+      : (locationState?.groupId ?? null)
 
   return (
     <div className="flex h-full flex-col">

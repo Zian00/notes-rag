@@ -6,9 +6,15 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { AttachmentChip } from "@/components/chat/AttachmentChip"
 import { ACCEPTED_FILE_TYPES } from "@/components/documents/UploadDropzone"
-import { useDocuments, useUploadDocument } from "@/api/hooks/useDocuments"
+import { GroupSelect } from "@/components/documents/GroupSelect"
+import {
+  useDocuments,
+  useUpdateDocumentMetadata,
+  useUploadDocument,
+} from "@/api/hooks/useDocuments"
 import { UploadError } from "@/api/uploadError"
 import { messageForUploadError } from "@/lib/uploadErrorMessage"
 import type { ChatSendFilters } from "@/api/hooks/useChat"
@@ -20,7 +26,8 @@ interface ChatInputProps {
   // The chat's current group (existing conversation's group_id, or a
   // not-yet-sent new chat's pending group) — an attach uploads straight
   // into this group with no prompt, including when it's null/ungrouped.
-  // The ungrouped-prompt UX is T10b's job, not this component's.
+  // When null, a successful attach opens the group-assignment popover below
+  // (T10b) instead of staying silently ungrouped.
   attachGroupId: string | null
 }
 
@@ -49,13 +56,20 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadingFilename, setUploadingFilename] = useState<string | null>(null)
   const [attachedDocumentId, setAttachedDocumentId] = useState<string | null>(null)
+  // Open only when the chat is ungrouped and an attach just succeeded — reset
+  // per-attach in handleFileSelected, not persisted, so it re-appears on every
+  // subsequent attach while the chat stays ungrouped (T10b's explicit "no
+  // don't-ask-again state" requirement).
+  const [isGroupPromptOpen, setIsGroupPromptOpen] = useState(false)
   const uploadDocument = useUploadDocument()
+  const updateDocumentGroup = useUpdateDocumentMetadata()
   const documentsQuery = useDocuments()
   const attachedDocument = documentsQuery.data?.find((doc) => doc.id === attachedDocumentId)
 
   function clearAttachment() {
     setUploadingFilename(null)
     setAttachedDocumentId(null)
+    setIsGroupPromptOpen(false)
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
@@ -67,6 +81,7 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     if (!file) return
 
     setAttachedDocumentId(null)
+    setIsGroupPromptOpen(false)
     setUploadingFilename(file.name)
     uploadDocument.mutate(
       { file, groupId: attachGroupId ?? undefined },
@@ -74,6 +89,11 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
         onSuccess: (document) => {
           setUploadingFilename(null)
           setAttachedDocumentId(document.id)
+          // Uploaded ungrouped (per #11's default) — offer to assign a group
+          // now, rather than leaving it silently ungrouped. A chat that
+          // already has a group skips this entirely (see #11's regression
+          // check).
+          if (attachGroupId === null) setIsGroupPromptOpen(true)
         },
         onError: (error) => {
           setUploadingFilename(null)
@@ -85,6 +105,17 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
         },
       }
     )
+  }
+
+  async function handleGroupPromptChange(groupId: string | null) {
+    if (!attachedDocumentId) return
+    try {
+      await updateDocumentGroup.mutateAsync({ documentId: attachedDocumentId, groupId })
+    } catch {
+      toast.error("Failed to update the document's group.")
+    } finally {
+      setIsGroupPromptOpen(false)
+    }
   }
 
   const canSend = value.trim().length > 0 && !isStreaming
@@ -140,12 +171,28 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
         </button>
 
         {(uploadingFilename || attachedDocument) && (
-          <AttachmentChip
-            filename={uploadingFilename ?? attachedDocument?.filename ?? ""}
-            status={uploadingFilename ? "uploading" : attachedDocument?.status ?? "pending"}
-            errorMessage={attachedDocument?.error_message}
-            onDismiss={clearAttachment}
-          />
+          <Popover open={isGroupPromptOpen} onOpenChange={setIsGroupPromptOpen}>
+            {/* No `asChild` — AttachmentChip is a plain function component that
+                doesn't forward a ref, so PopoverAnchor renders its own wrapping
+                element here (needed for Radix's Popper positioning) rather than
+                trying to attach a ref directly to the chip. */}
+            <PopoverAnchor className="self-start">
+              <AttachmentChip
+                filename={uploadingFilename ?? attachedDocument?.filename ?? ""}
+                status={uploadingFilename ? "uploading" : (attachedDocument?.status ?? "pending")}
+                errorMessage={attachedDocument?.error_message}
+                onDismiss={clearAttachment}
+              />
+            </PopoverAnchor>
+            <PopoverContent>
+              <GroupSelect
+                label="Add to a group?"
+                value={null}
+                onChange={(groupId) => void handleGroupPromptChange(groupId)}
+                disabled={updateDocumentGroup.isPending}
+              />
+            </PopoverContent>
+          </Popover>
         )}
 
         {isFiltersOpen && (
