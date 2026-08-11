@@ -1,4 +1,9 @@
-import { useMutation, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import {
+  useMutation,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { $api, fetchClient } from "@/api/client"
 import { UploadError } from "@/api/uploadError"
 import { DeleteError } from "@/api/deleteError"
@@ -32,22 +37,31 @@ export interface UploadDocumentInput {
 // Lists documents, optionally scoped to a group. Thin wrapper over openapi-react-query
 // so callers don't need to know the ("get", "/documents", { params }) call shape.
 export function useDocuments(groupId?: string): UseQueryResult<DocumentResponse[], unknown> {
-  return $api.useQuery("get", "/documents", {
-    params: { query: { group_id: groupId } },
-  }, {
-    // Keep polling while anything is still processing, so the list flips to
-    // ready/failed on its own without the user manually refreshing. No interval
-    // once everything has settled (pending/processing gone) — avoids polling forever.
-    refetchInterval: (query) => {
-      const docs = query.state.data
-      const stillWorking = docs?.some((d) => d.status === "pending" || d.status === "processing")
-      return stillWorking ? 2000 : false
+  return $api.useQuery(
+    "get",
+    "/documents",
+    {
+      params: { query: { group_id: groupId } },
     },
-  })
+    {
+      // Keep polling while anything is still processing, so the list flips to
+      // ready/failed on its own without the user manually refreshing. No interval
+      // once everything has settled (pending/processing gone) — avoids polling forever.
+      refetchInterval: (query) => {
+        const docs = query.state.data
+        const stillWorking = docs?.some((d) => d.status === "pending" || d.status === "processing")
+        return stillWorking ? 2000 : false
+      },
+    }
+  )
 }
 
 // Uploads a document via multipart/form-data and invalidates the documents list on success.
-export function useUploadDocument(): UseMutationResult<DocumentResponse, UploadError, UploadDocumentInput> {
+export function useUploadDocument(): UseMutationResult<
+  DocumentResponse,
+  UploadError,
+  UploadDocumentInput
+> {
   // useQueryClient() (not the app's queryClient singleton import) resolves to whatever
   // QueryClient the nearest QueryClientProvider supplies — the same instance useDocuments()
   // reads from — so invalidation always targets the right cache (tests provide their own
@@ -87,10 +101,54 @@ export function useUploadDocument(): UseMutationResult<DocumentResponse, UploadE
         // so `error` here is a loosely-typed fallback body — fall back to a
         // generic message rather than assuming its shape.
         const detail =
-          error && typeof error === "object" && "detail" in error ? String(error.detail) : "Upload failed"
+          error && typeof error === "object" && "detail" in error
+            ? String(error.detail)
+            : "Upload failed"
         throw new UploadError(response.status, detail)
       }
 
+      return data
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: documentsListKey })
+    },
+  })
+}
+
+export interface UpdateDocumentMetadataInput {
+  documentId: string
+  // `null` explicitly ungroups; `undefined` (the default when the key is
+  // omitted below) leaves the group untouched — matches the backend's
+  // model_fields_set PATCH semantics (see DocumentUpdate).
+  groupId?: string | null
+  tags?: string[]
+}
+
+// Edits a document's group and/or tags after upload via PATCH. Only the
+// fields actually passed end up in the request body, so an omitted groupId
+// never accidentally ungroups a document that was only having its tags edited.
+export function useUpdateDocumentMetadata(): UseMutationResult<
+  DocumentResponse,
+  Error,
+  UpdateDocumentMetadataInput
+> {
+  const queryClient = useQueryClient()
+  const documentsListKey = getDocumentsListKey()
+
+  return useMutation<DocumentResponse, Error, UpdateDocumentMetadataInput>({
+    mutationFn: async ({ documentId, groupId, tags }) => {
+      const body: { group_id?: string | null; tags?: string[] } = {}
+      if (groupId !== undefined) body.group_id = groupId
+      if (tags !== undefined) body.tags = tags
+
+      const { data, error, response } = await fetchClient.PATCH("/documents/{document_id}", {
+        params: { path: { document_id: documentId } },
+        body,
+      })
+      if (error || !data) {
+        if (response.status === 404) throw new Error("Document or group not found.")
+        throw new Error("Failed to update document.")
+      }
       return data
     },
     onSuccess: () => {
@@ -107,7 +165,11 @@ export interface ReplaceDocumentInput {
 
 // Replaces a document's content via multipart/form-data and invalidates the documents
 // list on success (the replaced document flips to "processing" until re-ingestion finishes).
-export function useReplaceDocument(): UseMutationResult<ReplaceDocumentResponse, UploadError, ReplaceDocumentInput> {
+export function useReplaceDocument(): UseMutationResult<
+  ReplaceDocumentResponse,
+  UploadError,
+  ReplaceDocumentInput
+> {
   const queryClient = useQueryClient()
   const documentsListKey = getDocumentsListKey()
 
@@ -124,7 +186,9 @@ export function useReplaceDocument(): UseMutationResult<ReplaceDocumentResponse,
 
       if (error || !data) {
         const detail =
-          error && typeof error === "object" && "detail" in error ? String(error.detail) : "Replace failed"
+          error && typeof error === "object" && "detail" in error
+            ? String(error.detail)
+            : "Replace failed"
         throw new UploadError(response.status, detail)
       }
       return data

@@ -768,9 +768,8 @@ describe("Sidebar groups", () => {
     server.use(
       http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1])),
       http.get(`${API_BASE}/conversations`, () => HttpResponse.json([groupedConvo])),
-      http.delete(
-        `${API_BASE}/groups/${group1.id}`,
-        () => HttpResponse.json({ chats_ungrouped: 1, documents_ungrouped: 2 })
+      http.delete(`${API_BASE}/groups/${group1.id}`, () =>
+        HttpResponse.json({ chats_ungrouped: 1, documents_ungrouped: 2 })
       )
     )
 

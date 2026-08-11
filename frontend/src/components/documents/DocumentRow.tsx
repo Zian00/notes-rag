@@ -10,9 +10,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useDeleteDocument, useReplaceDocument } from "@/api/hooks/useDocuments"
+import {
+  useDeleteDocument,
+  useReplaceDocument,
+  useUpdateDocumentMetadata,
+} from "@/api/hooks/useDocuments"
 import { DeleteError } from "@/api/deleteError"
 import { formatDate, formatFileSize } from "@/lib/format"
+import { GroupSelect } from "@/components/documents/GroupSelect"
 import type { components } from "@/api/schema"
 
 type DocumentResponse = components["schemas"]["DocumentResponse"]
@@ -25,12 +30,21 @@ export function DocumentRow({ document }: DocumentRowProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false)
   const deleteDocument = useDeleteDocument()
   const replaceDocument = useReplaceDocument()
+  const updateMetadata = useUpdateDocumentMetadata()
 
   const displayName = document.title ?? document.filename
   // Replace/Delete are rejected server-side (409) while a document is
   // pending/processing — disabling them here avoids the round-trip and the
   // confusing error toast that would otherwise follow.
   const isBusy = document.status === "pending" || document.status === "processing"
+
+  async function handleGroupChange(groupId: string | null) {
+    try {
+      await updateMetadata.mutateAsync({ documentId: document.id, groupId })
+    } catch {
+      toast.error("Failed to update the document's group.")
+    }
+  }
 
   function handleReplaceFileSelected(file: File) {
     replaceDocument.mutate(
@@ -84,9 +98,15 @@ export function DocumentRow({ document }: DocumentRowProps) {
               : "Processing…"}
           </p>
         )}
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {/* Group name display awaits T8's group picker/lookup — document.group_id is
-              just an id here, not a name worth rendering on its own. */}
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <GroupSelect
+            label={`Group for ${displayName}`}
+            hideLabel
+            value={document.group_id}
+            onChange={(groupId) => void handleGroupChange(groupId)}
+            disabled={isBusy || updateMetadata.isPending}
+            className="w-36"
+          />
           <span>{document.chunk_count} chunks</span>
           <span aria-hidden="true">&middot;</span>
           <span>{formatFileSize(document.file_size)}</span>

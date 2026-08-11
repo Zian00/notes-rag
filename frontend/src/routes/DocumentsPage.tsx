@@ -8,7 +8,7 @@ import { useUploadDocument } from "@/api/hooks/useDocuments"
 import { UploadError } from "@/api/uploadError"
 import { parseTags } from "@/lib/format"
 
-const EMPTY_METADATA: MetadataValues = { title: "", tags: "" }
+const EMPTY_METADATA: MetadataValues = { title: "", groupId: null, tags: "" }
 
 // Maps a failed upload's HTTP status to a message a user can act on, per the
 // backend's documented error cases (400 unsupported/empty, 413 too large,
@@ -38,6 +38,7 @@ export function DocumentsPage() {
       await uploadDocument.mutateAsync({
         file,
         title: metadata.title.trim() || undefined,
+        groupId: metadata.groupId ?? undefined,
         tags: parseTags(metadata.tags),
       })
       toast.success(`Uploaded "${file.name}".`)
@@ -46,7 +47,10 @@ export function DocumentsPage() {
     } catch (error) {
       // Non-UploadError throwables (e.g. a thrown network TypeError) still need
       // a user-facing message rather than surfacing nothing.
-      const message = error instanceof UploadError ? messageForUploadError(error) : "Upload failed. Please try again."
+      const message =
+        error instanceof UploadError
+          ? messageForUploadError(error)
+          : "Upload failed. Please try again."
       toast.error(message)
     }
   }
@@ -62,7 +66,11 @@ export function DocumentsPage() {
 
       <section className="mt-6 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
         <UploadDropzone file={file} onFileSelect={setFile} disabled={uploadDocument.isPending} />
-        <MetadataFields values={metadata} onChange={setMetadata} disabled={uploadDocument.isPending} />
+        <MetadataFields
+          values={metadata}
+          onChange={setMetadata}
+          disabled={uploadDocument.isPending}
+        />
         <div className="flex justify-end">
           <Button type="button" onClick={handleUpload} disabled={!file || uploadDocument.isPending}>
             {uploadDocument.isPending ? "Uploading…" : "Upload"}

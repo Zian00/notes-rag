@@ -13,6 +13,20 @@ import type { components } from "@/api/schema"
 const API_BASE = `${window.location.origin}/api`
 
 type DocumentResponse = components["schemas"]["DocumentResponse"]
+type GroupResponse = components["schemas"]["GroupResponse"]
+
+const group1: GroupResponse = {
+  id: "33333333-3333-3333-3333-333333333333",
+  name: "CS101",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+}
+
+const group2: GroupResponse = {
+  ...group1,
+  id: "44444444-4444-4444-4444-444444444444",
+  name: "CS102",
+}
 
 const doc1: DocumentResponse = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -55,7 +69,7 @@ function renderPage() {
     <Wrapper>
       <DocumentsPage />
       <Toaster />
-    </Wrapper>,
+    </Wrapper>
   )
 }
 
@@ -85,7 +99,7 @@ describe("DocumentsPage", () => {
         listCallCount += 1
         return HttpResponse.json(listCallCount === 1 ? [] : [doc1])
       }),
-      http.post(`${API_BASE}/documents`, () => HttpResponse.json(doc1, { status: 201 })),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(doc1, { status: 201 }))
     )
 
     const user = userEvent.setup()
@@ -94,7 +108,9 @@ describe("DocumentsPage", () => {
     await screen.findByText(/upload your first note/i)
 
     const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
-    const fileInput = screen.getByLabelText(/choose file/i, { selector: "input" }) as HTMLInputElement
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
     await user.upload(fileInput, file)
 
     await screen.findByText("notes1.pdf")
@@ -125,8 +141,8 @@ describe("DocumentsPage", () => {
     server.use(
       http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
       http.post(`${API_BASE}/documents`, () =>
-        HttpResponse.json({ detail: "File too large" }, { status: 413 }),
-      ),
+        HttpResponse.json({ detail: "File too large" }, { status: 413 })
+      )
     )
 
     const user = userEvent.setup()
@@ -135,7 +151,9 @@ describe("DocumentsPage", () => {
     await screen.findByText(/upload your first note/i)
 
     const file = new File(["x"], "big.pdf", { type: "application/pdf" })
-    const fileInput = screen.getByLabelText(/choose file/i, { selector: "input" }) as HTMLInputElement
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
     await user.upload(fileInput, file)
     await user.click(screen.getByRole("button", { name: /^upload$/i }))
 
@@ -146,8 +164,11 @@ describe("DocumentsPage", () => {
     server.use(
       http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
       http.post(`${API_BASE}/documents`, () =>
-        HttpResponse.json({ detail: "Document already exists", document_id: doc1.id }, { status: 409 }),
-      ),
+        HttpResponse.json(
+          { detail: "Document already exists", document_id: doc1.id },
+          { status: 409 }
+        )
+      )
     )
 
     const user = userEvent.setup()
@@ -156,7 +177,9 @@ describe("DocumentsPage", () => {
     await screen.findByText(/upload your first note/i)
 
     const file = new File(["x"], "dup.pdf", { type: "application/pdf" })
-    const fileInput = screen.getByLabelText(/choose file/i, { selector: "input" }) as HTMLInputElement
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
     await user.upload(fileInput, file)
     await user.click(screen.getByRole("button", { name: /^upload$/i }))
 
@@ -170,7 +193,7 @@ describe("DocumentsPage", () => {
         listCallCount += 1
         return HttpResponse.json(listCallCount === 1 ? [doc1] : [])
       }),
-      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 })),
+      http.delete(`${API_BASE}/documents/${doc1.id}`, () => new HttpResponse(null, { status: 204 }))
     )
 
     const user = userEvent.setup()
@@ -185,5 +208,102 @@ describe("DocumentsPage", () => {
 
     await waitFor(() => expect(screen.queryByText("Notes 1")).not.toBeInTheDocument())
     expect(await screen.findByText(/upload your first note/i)).toBeInTheDocument()
+  })
+
+  it("uploads a file with the selected group", async () => {
+    let uploadedFormFields: string[] = []
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1, group2])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        uploadedFormFields = [String(form.get("group_id"))]
+        return HttpResponse.json(doc1, { status: 201 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText(/upload your first note/i)
+
+    const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
+    await user.upload(fileInput, file)
+    await screen.findByText("notes1.pdf")
+
+    await user.selectOptions(screen.getByLabelText("Group"), group2.name)
+    await user.click(screen.getByRole("button", { name: /^upload$/i }))
+
+    await waitFor(() => expect(uploadedFormFields).toEqual([group2.id]))
+  })
+
+  it("creates a new group inline from the upload form and assigns it", async () => {
+    let uploadedGroupId: string | null = null
+    // GET /groups must reflect the just-created group on the post-create refetch
+    // (useCreateGroup's onSuccess invalidates the list) — a static [] response
+    // would never grow an <option> for it, so the <select>'s value could never
+    // resolve to the new group's id.
+    let groupsState: GroupResponse[] = []
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json(groupsState)),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/groups`, () => {
+        groupsState = [...groupsState, group1]
+        return HttpResponse.json(group1, { status: 200 })
+      }),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        uploadedGroupId = form.get("group_id") as string | null
+        return HttpResponse.json(doc1, { status: 201 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText(/upload your first note/i)
+
+    const file = new File(["hello world"], "notes1.pdf", { type: "application/pdf" })
+    const fileInput = screen.getByLabelText(/choose file/i, {
+      selector: "input",
+    }) as HTMLInputElement
+    await user.upload(fileInput, file)
+    await screen.findByText("notes1.pdf")
+
+    await user.selectOptions(screen.getByLabelText("Group"), "+ New group…")
+    const newGroupInput = await screen.findByPlaceholderText(/group name/i)
+    await user.type(newGroupInput, group1.name)
+    await user.keyboard("{Enter}")
+
+    // The select swaps back once the new group resolves, now showing it selected.
+    await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue(group1.id))
+
+    await user.click(screen.getByRole("button", { name: /^upload$/i }))
+
+    await waitFor(() => expect(uploadedGroupId).toBe(group1.id))
+  })
+
+  it("changes an existing document's group from its row", async () => {
+    let patchedBody: unknown
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1, group2])),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([doc1])),
+      http.patch(`${API_BASE}/documents/${doc1.id}`, async ({ request }) => {
+        patchedBody = await request.json()
+        return HttpResponse.json({ ...doc1, group_id: group2.id })
+      })
+    )
+
+    renderPage()
+    await screen.findByText("Notes 1")
+
+    const user = userEvent.setup()
+    const rowGroupSelect = screen.getByLabelText(`Group for ${doc1.title as string}`)
+    await user.selectOptions(rowGroupSelect, group2.name)
+
+    await waitFor(() => expect(patchedBody).toEqual({ group_id: group2.id }))
   })
 })

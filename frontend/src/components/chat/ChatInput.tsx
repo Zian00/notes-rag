@@ -74,7 +74,10 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
           onClick={() => setIsFiltersOpen((open) => !open)}
           className="flex w-fit items-center gap-1 self-start rounded text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
-          <ChevronDown className={cn("size-3.5 transition-transform", isFiltersOpen && "rotate-180")} aria-hidden="true" />
+          <ChevronDown
+            className={cn("size-3.5 transition-transform", isFiltersOpen && "rotate-180")}
+            aria-hidden="true"
+          />
           Filters
         </button>
 
@@ -82,7 +85,12 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
           <div className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <Label htmlFor={tagsId}>Tags (comma-separated)</Label>
-              <Input id={tagsId} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="week1, midterm" />
+              <Input
+                id={tagsId}
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+                placeholder="week1, midterm"
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor={topKId}>Top K</Label>
@@ -117,7 +125,13 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
               <Square className="size-4" aria-hidden="true" />
             </Button>
           ) : (
-            <Button type="button" size="icon" aria-label="Send" disabled={!canSend} onClick={submit}>
+            <Button
+              type="button"
+              size="icon"
+              aria-label="Send"
+              disabled={!canSend}
+              onClick={submit}
+            >
               <Send className="size-4" aria-hidden="true" />
             </Button>
           )}

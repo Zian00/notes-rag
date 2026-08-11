@@ -1,9 +1,11 @@
 import { useId } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { GroupSelect } from "@/components/documents/GroupSelect"
 
 export interface MetadataValues {
   title: string
+  groupId: string | null
   tags: string
 }
 
@@ -16,18 +18,14 @@ interface MetadataFieldsProps {
 // Optional per-upload metadata: title is a plain string, tags is a
 // comma-separated string in the UI that the caller splits into string[]
 // (see parseTags) only at submit time — keeping raw text here avoids fighting
-// the user mid-keystroke over trimming/splitting.
-//
-// Group assignment (T8) isn't wired up here yet — the old free-text `course`
-// field was removed because the backend dropped it in favor of `group_id`
-// (a real FK, not a string a user can type), and a group picker needs its own
-// dropdown component, not a text Input.
+// the user mid-keystroke over trimming/splitting. Group is a real FK (picked
+// via GroupSelect's dropdown), not free text like the old `course` field.
 export function MetadataFields({ values, onChange, disabled = false }: MetadataFieldsProps) {
   const titleId = useId()
   const tagsId = useId()
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={titleId}>Title</Label>
         <Input
@@ -38,6 +36,12 @@ export function MetadataFields({ values, onChange, disabled = false }: MetadataF
           onChange={(e) => onChange({ ...values, title: e.target.value })}
         />
       </div>
+      <GroupSelect
+        label="Group"
+        value={values.groupId}
+        onChange={(groupId) => onChange({ ...values, groupId })}
+        disabled={disabled}
+      />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={tagsId}>Tags</Label>
         <Input

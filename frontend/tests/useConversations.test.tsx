@@ -3,7 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import type { ReactNode } from "react"
 import { server } from "./msw/server"
-import { useConversations, useConversation, useDeleteConversation } from "@/api/hooks/useConversations"
+import {
+  useConversations,
+  useConversation,
+  useDeleteConversation,
+} from "@/api/hooks/useConversations"
 import type { components } from "@/api/schema"
 
 // client.ts resolves its relative "/api" base against window.location.origin —
@@ -64,7 +68,7 @@ describe("useConversations", () => {
 describe("useConversation", () => {
   it("fetches the conversation detail when an id is provided", async () => {
     server.use(
-      http.get(`${API_BASE}/conversations/${convo1.id}`, () => HttpResponse.json(convo1Detail)),
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () => HttpResponse.json(convo1Detail))
     )
 
     const { result } = renderHook(() => useConversation(convo1.id), { wrapper: createWrapper() })
@@ -79,7 +83,7 @@ describe("useConversation", () => {
       http.get(`${API_BASE}/conversations/:conversationId`, () => {
         requestCount += 1
         return HttpResponse.json(convo1Detail)
-      }),
+      })
     )
 
     const { result } = renderHook(() => useConversation(undefined), { wrapper: createWrapper() })
@@ -101,7 +105,10 @@ describe("useDeleteConversation", () => {
         listCallCount += 1
         return HttpResponse.json(listCallCount === 1 ? [convo1] : [])
       }),
-      http.delete(`${API_BASE}/conversations/${convo1.id}`, () => new HttpResponse(null, { status: 204 })),
+      http.delete(
+        `${API_BASE}/conversations/${convo1.id}`,
+        () => new HttpResponse(null, { status: 204 })
+      )
     )
 
     // Both hooks share a single renderHook() root — mirrors the documents hooks'
@@ -109,7 +116,7 @@ describe("useDeleteConversation", () => {
     // a single React root under this test setup.
     const { result } = renderHook(
       () => ({ list: useConversations(), delete: useDeleteConversation() }),
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     )
     await waitFor(() => expect(result.current.list.isLoading).toBe(false))
     expect(result.current.list.data).toEqual([convo1])
@@ -124,8 +131,8 @@ describe("useDeleteConversation", () => {
   it("throws an error with status 404 when the conversation is already gone", async () => {
     server.use(
       http.delete(`${API_BASE}/conversations/${convo1.id}`, () =>
-        HttpResponse.json({ detail: "Conversation not found" }, { status: 404 }),
-      ),
+        HttpResponse.json({ detail: "Conversation not found" }, { status: 404 })
+      )
     )
 
     const { result } = renderHook(() => useDeleteConversation(), { wrapper: createWrapper() })
