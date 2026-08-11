@@ -1,16 +1,27 @@
-import { useId, useState, type KeyboardEvent } from "react"
-import { ChevronDown, Send, Square } from "lucide-react"
+import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react"
+import { ChevronDown, Paperclip, Send, Square } from "lucide-react"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { AttachmentChip } from "@/components/chat/AttachmentChip"
+import { ACCEPTED_FILE_TYPES } from "@/components/documents/UploadDropzone"
+import { useDocuments, useUploadDocument } from "@/api/hooks/useDocuments"
+import { UploadError } from "@/api/uploadError"
+import { messageForUploadError } from "@/lib/uploadErrorMessage"
 import type { ChatSendFilters } from "@/api/hooks/useChat"
 
 interface ChatInputProps {
   isStreaming: boolean
   onSend: (question: string, filters?: ChatSendFilters) => void
   onStop: () => void
+  // The chat's current group (existing conversation's group_id, or a
+  // not-yet-sent new chat's pending group) — an attach uploads straight
+  // into this group with no prompt, including when it's null/ungrouped.
+  // The ungrouped-prompt UX is T10b's job, not this component's.
+  attachGroupId: string | null
 }
 
 // Backend's documented top_k range (see ChatRequest schema) — values outside
@@ -19,7 +30,7 @@ interface ChatInputProps {
 const TOP_K_MIN = 1
 const TOP_K_MAX = 20
 
-export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
+export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatInputProps) {
   const [value, setValue] = useState("")
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
   const [tags, setTags] = useState("")
@@ -28,6 +39,53 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
   const textareaId = useId()
   const tagsId = useId()
   const topKId = useId()
+  const fileInputId = useId()
+
+  // Attach state: `uploadingFilename` covers the initial POST (no document
+  // id exists yet), `attachedDocumentId` covers everything after — its live
+  // status is read from useDocuments()'s already-polling list rather than a
+  // second dedicated status hook (see design doc §4.2's "implementation
+  // detail for the ticket" note).
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadingFilename, setUploadingFilename] = useState<string | null>(null)
+  const [attachedDocumentId, setAttachedDocumentId] = useState<string | null>(null)
+  const uploadDocument = useUploadDocument()
+  const documentsQuery = useDocuments()
+  const attachedDocument = documentsQuery.data?.find((doc) => doc.id === attachedDocumentId)
+
+  function clearAttachment() {
+    setUploadingFilename(null)
+    setAttachedDocumentId(null)
+    if (fileInputRef.current) fileInputRef.current.value = ""
+  }
+
+  function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Cleared immediately (not after upload resolves) so picking the exact
+    // same file again later still fires a change event.
+    event.target.value = ""
+    if (!file) return
+
+    setAttachedDocumentId(null)
+    setUploadingFilename(file.name)
+    uploadDocument.mutate(
+      { file, groupId: attachGroupId ?? undefined },
+      {
+        onSuccess: (document) => {
+          setUploadingFilename(null)
+          setAttachedDocumentId(document.id)
+        },
+        onError: (error) => {
+          setUploadingFilename(null)
+          toast.error(
+            error instanceof UploadError
+              ? messageForUploadError(error)
+              : "Upload failed. Please try again."
+          )
+        },
+      }
+    )
+  }
 
   const canSend = value.trim().length > 0 && !isStreaming
 
@@ -81,6 +139,15 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
           Filters
         </button>
 
+        {(uploadingFilename || attachedDocument) && (
+          <AttachmentChip
+            filename={uploadingFilename ?? attachedDocument?.filename ?? ""}
+            status={uploadingFilename ? "uploading" : attachedDocument?.status ?? "pending"}
+            errorMessage={attachedDocument?.error_message}
+            onDismiss={clearAttachment}
+          />
+        )}
+
         {isFiltersOpen && (
           <div className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
@@ -111,6 +178,28 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
           <Label htmlFor={textareaId} className="sr-only">
             Message
           </Label>
+          <Label htmlFor={fileInputId} className="sr-only">
+            Attach a file
+          </Label>
+          <input
+            ref={fileInputRef}
+            id={fileInputId}
+            type="file"
+            accept={ACCEPTED_FILE_TYPES}
+            onChange={handleFileSelected}
+            disabled={uploadDocument.isPending}
+            className="sr-only"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Attach a file"
+            disabled={uploadDocument.isPending}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="size-4" aria-hidden="true" />
+          </Button>
           <Textarea
             id={textareaId}
             value={value}

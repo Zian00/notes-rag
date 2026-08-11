@@ -103,6 +103,19 @@ export function ChatPage() {
   const isLoadingHistory =
     Boolean(conversationId) && conversationQuery.isLoading && messages.length === 0
 
+  // The group an attach (T10a) uploads into: an existing conversation's own
+  // group_id, or — for a chat that hasn't been sent yet — whatever group
+  // this fresh thread is pending into. Reads `locationState.groupId` rather
+  // than `pendingGroupIdRef.current` (this project's lint forbids reading a
+  // ref during render) — the two always agree before the first send, since
+  // the ref is only ever seeded from this same value (see the effect above);
+  // handleSend's post-send ref-clearing doesn't matter here because by then
+  // `conversationId` is set and the first branch takes over.
+  const attachGroupId: string | null =
+    conversationId !== undefined
+      ? conversationQuery.data?.group_id ?? null
+      : locationState?.groupId ?? null
+
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -112,7 +125,12 @@ export function ChatPage() {
           isLoadingHistory={isLoadingHistory}
         />
       </div>
-      <ChatInput isStreaming={isStreaming} onSend={handleSend} onStop={stop} />
+      <ChatInput
+        isStreaming={isStreaming}
+        onSend={handleSend}
+        onStop={stop}
+        attachGroupId={attachGroupId}
+      />
     </div>
   )
 }

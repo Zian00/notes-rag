@@ -7,8 +7,9 @@ import { formatFileSize } from "@/lib/format"
 // Server-sniffed content types, not client-enforced — the `accept` attribute is
 // only a picker convenience (narrows what the OS file dialog shows by default).
 // The server still validates the actual bytes, so we deliberately do not
-// reject files client-side based on extension or MIME type.
-const ACCEPTED_FILE_TYPES = ".pdf,.pptx,.docx,.txt,.md,.png,.jpg,.jpeg"
+// reject files client-side based on extension or MIME type. Exported so
+// ChatInput's attach affordance uses the exact same accept-list (T10a).
+export const ACCEPTED_FILE_TYPES = ".pdf,.pptx,.docx,.txt,.md,.png,.jpg,.jpeg"
 
 interface UploadDropzoneProps {
   file: File | null

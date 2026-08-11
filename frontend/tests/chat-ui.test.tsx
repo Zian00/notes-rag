@@ -38,6 +38,7 @@ const API_BASE = `${window.location.origin}/api`
 type ConversationResponse = components["schemas"]["ConversationResponse"]
 type ConversationDetail = components["schemas"]["ConversationDetail"]
 type GroupResponse = components["schemas"]["GroupResponse"]
+type DocumentResponse = components["schemas"]["DocumentResponse"]
 
 const mockUser = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -74,6 +75,9 @@ function mockAuthed() {
     // Sidebar always renders group sections, so every test needs a default
     // /groups response even when groups aren't what's under test.
     http.get(`${API_BASE}/groups`, () => HttpResponse.json([])),
+    // ChatInput's attach chip polls the documents list for status — every test
+    // needs a default /documents response even when attach isn't under test.
+    http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
     // Catch-all so a new-chat's post-send navigation to /chat/:id (which mounts
     // useConversation for that fresh id) doesn't trip MSW's unhandled-request
     // warning; ChatPage's seed-when-empty guard means this 404 is harmless —
@@ -885,5 +889,177 @@ describe("Sidebar groups", () => {
     await user.click(screen.getByRole("button", { name: group1.name }))
     await screen.findByRole("link", { name: /first chat/i })
     expect(screen.getAllByText(/no chats here yet/i)).toHaveLength(1)
+  })
+})
+
+describe("Chat attach", () => {
+  const attachGroup: GroupResponse = {
+    id: "55555555-5555-5555-5555-555555555555",
+    name: "BIO",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+
+  const groupedConvo: ConversationResponse = {
+    ...convo1,
+    id: "66666666-6666-6666-6666-666666666666",
+    group_id: attachGroup.id,
+  }
+
+  const groupedConvoDetail: ConversationDetail = { ...groupedConvo, messages: [] }
+
+  const uploadedDoc: DocumentResponse = {
+    id: "77777777-7777-7777-7777-777777777777",
+    filename: "notes.pdf",
+    title: null,
+    group_id: null,
+    tags: [],
+    content_type: "application/pdf",
+    page_count: null,
+    chunk_count: 0,
+    status: "pending",
+    error_message: null,
+    file_size: 1024,
+    embedding_model: "test-model",
+    embedding_dimension: 384,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+
+  function selectAttachFile(name = "notes.pdf") {
+    return new File(["hello"], name, { type: "application/pdf" })
+  }
+
+  it("uploads immediately on attach, into the ungrouped chat's (null) group, before Send is pressed", async () => {
+    mockAuthed()
+    let uploadedGroupId: string | undefined | null
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        uploadedGroupId = form.get("group_id") as string | null
+        return HttpResponse.json(uploadedDoc, { status: 201 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    // Uploaded (POST fired) even though nothing was ever sent.
+    await waitFor(() => expect(uploadedGroupId).toBeNull())
+    expect(await screen.findByText("notes.pdf")).toBeInTheDocument()
+  })
+
+  it("uploads into an existing grouped conversation's group with no prompt", async () => {
+    mockAuthed()
+    let uploadedGroupId: string | undefined | null
+    server.use(
+      http.get(`${API_BASE}/conversations/${groupedConvo.id}`, () =>
+        HttpResponse.json(groupedConvoDetail)
+      ),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        uploadedGroupId = form.get("group_id") as string | null
+        return HttpResponse.json({ ...uploadedDoc, group_id: attachGroup.id }, { status: 201 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp([`/chat/${groupedConvo.id}`])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    await waitFor(() => expect(uploadedGroupId).toBe(attachGroup.id))
+  })
+
+  it("shows an uploading chip that reflects status, and dismisses without deleting the document", async () => {
+    mockAuthed()
+    let documentsState: DocumentResponse[] = []
+    let deleteWasCalled = false
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json(documentsState)),
+      http.post(`${API_BASE}/documents`, () => {
+        documentsState = [uploadedDoc]
+        return HttpResponse.json(uploadedDoc, { status: 201 })
+      }),
+      http.delete(`${API_BASE}/documents/${uploadedDoc.id}`, () => {
+        deleteWasCalled = true
+        return new HttpResponse(null, { status: 204 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    expect(await screen.findByText("notes.pdf")).toBeInTheDocument()
+    expect(screen.getByText(/processing/i)).toBeInTheDocument()
+
+    // The list now reports it ready — the chip's polled status follows.
+    // (useDocuments polls every 2s while anything is pending/processing, so
+    // this needs longer than the default waitFor timeout to observe.)
+    documentsState = [{ ...uploadedDoc, status: "ready" }]
+    await waitFor(() => expect(screen.queryByText(/processing/i)).not.toBeInTheDocument(), {
+      timeout: 4000,
+    })
+
+    await user.click(screen.getByRole("button", { name: /remove attached file/i }))
+    expect(screen.queryByText("notes.pdf")).not.toBeInTheDocument()
+    expect(deleteWasCalled).toBe(false)
+  })
+
+  it("surfaces an upload error immediately without leaving a chip behind", async () => {
+    mockAuthed()
+    server.use(
+      http.post(`${API_BASE}/documents`, () =>
+        HttpResponse.json({ detail: "File too large" }, { status: 413 })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    expect(await screen.findByText(/too large/i)).toBeInTheDocument()
+    expect(screen.queryByText("notes.pdf")).not.toBeInTheDocument()
+  })
+
+  it("does not block sending a message on the attached document's processing status", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(uploadedDoc, { status: 201 }))
+    )
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "ok" } },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+    await screen.findByText("notes.pdf")
+    expect(screen.getByText(/processing/i)).toBeInTheDocument()
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "question while attaching")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    expect(await screen.findByText("question while attaching")).toBeInTheDocument()
+    // Still processing — sending didn't wait for the attachment to finish.
+    expect(screen.getByText(/processing/i)).toBeInTheDocument()
   })
 })
