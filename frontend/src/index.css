@@ -129,4 +129,10 @@
   html {
     @apply font-sans;
     }
+  /* Tailwind v4's preflight resets <button> to cursor: default (matching native
+     OS button behavior) — this app wants the conventional web "clickable"
+     pointer cursor on every enabled button instead, app-wide. */
+  button:not(:disabled) {
+    cursor: pointer;
+    }
 }
