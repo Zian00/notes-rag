@@ -163,27 +163,36 @@ wanted later). Bulk actions (multi-select delete/move).
 
 ## 6. Delivery plan — tickets
 
-Independent of each other except where noted; drag-and-drop can ship in parallel with the other
-two.
+Published to the issue tracker 2026-08-11, split into tracer-bullet slices per `/to-tickets`. T10
+was split into T10a/T10b since the original single ticket bundled two independently-verifiable
+behaviors (attach/upload/chip vs. the ungrouped group-assignment prompt).
 
-- **T9 — Sidebar drag-and-drop**: add `@dnd-kit/core` + `@dnd-kit/sortable`; `ConversationItem`
-  draggable, `GroupSection`/`UngroupedSection` droppable; drop calls the existing
-  `useUpdateConversation`. Keyboard-drag verified; "Move to" menu unchanged.
-- **T10 — Chat-native upload** *(no hard dependency, but land after T9 is fine either order)*:
-  paperclip in `ChatInput`, upload-on-attach, status chip, group-assignment prompt for ungrouped
-  chats, dismissible chip. Reuses `useUploadDocument`/`GroupSelect`.
-- **T11 — Documents page redesign** *(needs T10 landed — the redesign's premise is that chat-
-  upload exists)*: list-first layout, group filter on `DocumentList`, upload form moves into a
-  dialog behind a header action.
+- **[#10 — T9: Sidebar drag-and-drop](https://github.com/Zian00/notes-rag/issues/10)**
+  *(blocked by: none)*: add `@dnd-kit/core` + `@dnd-kit/sortable`; `ConversationItem` draggable,
+  `GroupSection`/`UngroupedSection` droppable; drop calls the existing `useUpdateConversation`.
+  Keyboard-drag verified; "Move to" menu unchanged.
+- **[#11 — T10a: attach + upload + status chip](https://github.com/Zian00/notes-rag/issues/11)**
+  *(blocked by: none)*: paperclip in `ChatInput`, upload-on-attach, status chip, dismissible chip.
+  Uploads straight into the chat's current group (including `null`/ungrouped) with no prompt —
+  the prompt itself is T10b's job. Reuses `useUploadDocument`.
+- **[#13 — T10b: group-assignment on attach](https://github.com/Zian00/notes-rag/issues/13)**
+  *(blocked by: #11)*: the ungrouped-chat popover (reusing `GroupSelect`), re-prompting on every
+  attach while the chat stays ungrouped.
+- **[#12 — T11: Documents page redesign](https://github.com/Zian00/notes-rag/issues/12)**
+  *(blocked by: #13)*: list-first layout, group filter (dropdown) on `DocumentList`, upload form
+  moves into a dialog behind a header action.
+
+Frontier as of publish time: #10 and #11 can both start immediately.
 
 ## 7. Resolved (grilled 2026-08-11)
 
-- **T9**: every section is always-hoverable as a drop target (not just when empty) — cosmetic,
-  low-stakes, matches the doc's original default. `UngroupedSection` is included (see §3.2).
-- **T10**: inline **popover** (not a modal), reusing `GroupSelect`'s pattern — lighter weight,
-  doesn't block the screen. It re-prompts on every attach while the chat stays ungrouped, not
-  just the first (see §4.2).
-- **T11**: **dropdown** filter for the first cut, not Sidebar-style collapsible sections —
+- **T9** (#10): every section is always-hoverable as a drop target (not just when empty) —
+  cosmetic, low-stakes, matches the doc's original default. `UngroupedSection` is included
+  (see §3.2).
+- **T10b** (#13): inline **popover** (not a modal), reusing `GroupSelect`'s pattern — lighter
+  weight, doesn't block the screen. It re-prompts on every attach while the chat stays ungrouped,
+  not just the first (see §4.2).
+- **T11** (#12): **dropdown** filter for the first cut, not Sidebar-style collapsible sections —
   Documents is a flat list today with no section concept, so a dropdown is strictly additive.
   Migrating to sections is a separable follow-up if the flat list feels cramped later.
 
