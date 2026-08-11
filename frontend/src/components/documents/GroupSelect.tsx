@@ -5,6 +5,10 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useCreateGroup, useGroups } from "@/api/hooks/useGroups"
 import { useInlineEdit } from "@/hooks/useInlineEdit"
+import {
+  GROUP_OPTION_CLASSNAME,
+  GROUP_SELECT_CLASSNAME,
+} from "@/components/documents/groupSelectStyles"
 
 // Sentinel <option> values distinct from any real group UUID — never sent to
 // the backend, only used to interpret the native <select>'s onChange.
@@ -124,27 +128,17 @@ export function GroupSelect({
         value={value ?? NONE_VALUE}
         onChange={handleSelectChange}
         disabled={disabled}
-        className={cn(
-          "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none",
-          "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-          "disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50",
-          "md:text-sm [color-scheme:light] dark:bg-input/30 dark:[color-scheme:dark] dark:disabled:bg-input/80"
-        )}
+        className={GROUP_SELECT_CLASSNAME}
       >
-        {/* Chromium's native <option> popup ignores color-scheme entirely for
-            its own background/text colors (verified live: computed
-            color-scheme was "dark" on both this <select> and <html>, yet the
-            popup still painted light) — it DOES respect ordinary CSS on the
-            <option> elements themselves, so that's what actually themes it. */}
-        <option className="bg-popover text-popover-foreground" value={NONE_VALUE}>
+        <option className={GROUP_OPTION_CLASSNAME} value={NONE_VALUE}>
           None
         </option>
         {groups.map((group) => (
-          <option key={group.id} className="bg-popover text-popover-foreground" value={group.id}>
+          <option key={group.id} className={GROUP_OPTION_CLASSNAME} value={group.id}>
             {group.name}
           </option>
         ))}
-        <option className="bg-popover text-popover-foreground" value={NEW_GROUP_VALUE}>
+        <option className={GROUP_OPTION_CLASSNAME} value={NEW_GROUP_VALUE}>
           + New group…
         </option>
       </select>

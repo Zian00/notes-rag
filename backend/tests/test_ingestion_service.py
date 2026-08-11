@@ -92,6 +92,11 @@ async def test_process_parses_chunks_embeds_and_marks_ready(db_session, tmp_path
 
 @pytest.mark.asyncio
 async def test_process_preserves_group_id_assigned_at_upload(db_session, tmp_path):
+    """Guards a hypothesis ruled out while diagnosing a "group cleared after
+    upload" report (2026-08-11): confirms the background job's mark-ready
+    write never touches group_id. The actual cause turned out to be a
+    frontend race (see DocumentsPage/GroupSelect's onBusyChange) — kept as a
+    permanent regression guard on this path regardless."""
     user = await _user(db_session)
     group = await GroupRepository(db_session).create(user_id=user.id, name="CS101")
     await db_session.commit()

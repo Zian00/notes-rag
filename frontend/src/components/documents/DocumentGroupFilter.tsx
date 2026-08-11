@@ -1,6 +1,8 @@
 import { useId } from "react"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 import { useGroups } from "@/api/hooks/useGroups"
+import { GROUP_OPTION_CLASSNAME, GROUP_SELECT_CLASSNAME } from "@/components/documents/groupSelectStyles"
 
 // Sentinel <option> value distinct from any real group UUID — never sent to
 // the backend, only used to interpret the native <select>'s onChange as "no
@@ -35,13 +37,13 @@ export function DocumentGroupFilter({ value, onChange }: DocumentGroupFilterProp
           const raw = event.target.value
           onChange(raw === ALL_VALUE ? undefined : raw)
         }}
-        className="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm md:w-48 dark:bg-input/30"
+        className={cn(GROUP_SELECT_CLASSNAME, "md:w-48")}
       >
-        <option className="bg-popover text-popover-foreground" value={ALL_VALUE}>
+        <option className={GROUP_OPTION_CLASSNAME} value={ALL_VALUE}>
           All groups
         </option>
         {groups.map((group) => (
-          <option key={group.id} className="bg-popover text-popover-foreground" value={group.id}>
+          <option key={group.id} className={GROUP_OPTION_CLASSNAME} value={group.id}>
             {group.name}
           </option>
         ))}

@@ -25,8 +25,11 @@ const EMPTY_METADATA: MetadataValues = { title: "", groupId: null, tags: "" }
 // (#11/#13), so this page mainly serves browsing/filtering/managing what's
 // already there.
 export function DocumentsPage() {
+  // Page-level layout state (T11): which section is showing, and the active filter.
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const [filterGroupId, setFilterGroupId] = useState<string | undefined>(undefined)
+
+  // Upload dialog's own form state — same fields the old always-expanded form used.
   const [file, setFile] = useState<File | null>(null)
   const [metadata, setMetadata] = useState<MetadataValues>(EMPTY_METADATA)
   // True while MetadataFields' Group field has its inline "+ New group…" form
@@ -41,6 +44,7 @@ export function DocumentsPage() {
   function resetUploadForm() {
     setFile(null)
     setMetadata(EMPTY_METADATA)
+    setIsGroupBusy(false)
   }
 
   async function handleUpload() {
