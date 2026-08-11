@@ -59,10 +59,11 @@ class ChunkRepository(BaseRepository[DocumentChunk]):
             # per-user isolation: never return another user's chunks
             .where(DocumentChunk.user_id == user_id)
         )
-        # Group scope is strict: a grouped chat sees ONLY that group's documents.
-        # group_id is None (ungrouped chat) applies no group filter → all user docs.
-        if group_id is not None:
-            stmt = stmt.where(Document.group_id == group_id)
+        # Group scope is strict for every bucket, including "ungrouped": a chat with
+        # group_id=None must see ONLY documents that are themselves ungrouped, not the
+        # user's whole library. SQLAlchemy compiles `== None` to `IS NULL`, so this one
+        # comparison correctly covers both the grouped and ungrouped cases.
+        stmt = stmt.where(Document.group_id == group_id)
         if tags:
             stmt = stmt.where(Document.tags.contains(tags))  # JSONB @> : doc has all given tags
         return stmt

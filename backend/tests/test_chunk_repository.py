@@ -90,6 +90,35 @@ async def test_search_filters_by_group(db_session):
     assert await repo.search_similar(user.id, _vec(0), top_k=5, group_id=uuid.uuid4()) == []
 
 
+@pytest.mark.asyncio
+async def test_search_ungrouped_excludes_grouped_documents(db_session):
+    """An ungrouped chat (group_id=None) is its own isolated bucket — it must NOT
+    see documents that belong to a group, only documents that are themselves
+    ungrouped. This mirrors search_filters_by_group's strictness for every other
+    group, including the implicit "no group" one."""
+    user, ungrouped_doc = await _user_and_doc(db_session)
+    _, grouped_doc = await _user_and_doc(db_session)
+    grouped_doc.user_id = user.id
+    group = Group(user_id=user.id, name="BIO")
+    db_session.add(group)
+    await db_session.flush()
+    grouped_doc.group_id = group.id
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [
+            dict(document_id=ungrouped_doc.id, user_id=user.id, chunk_index=0,
+                 content="ungrouped chunk", content_hash=hash_content("ungrouped chunk"),
+                 embedding=_vec(0)),
+            dict(document_id=grouped_doc.id, user_id=user.id, chunk_index=0,
+                 content="grouped chunk", content_hash=hash_content("grouped chunk"),
+                 embedding=_vec(0)),
+        ]
+    )
+    await db_session.commit()
+    results = await repo.search_similar(user.id, _vec(0), top_k=5, group_id=None)
+    assert [r.content for r in results] == ["ungrouped chunk"]
+
+
 def _chunk_row(document_id, user_id, chunk_index, content_hash):
     """Helper to construct a chunk row dict for testing."""
     return dict(
@@ -203,6 +232,31 @@ async def test_search_keyword_filters_by_group(db_session):
     await db_session.commit()
     assert len(await repo.search_keyword(user.id, "respiration", top_k=5, group_id=group.id)) == 1
     assert await repo.search_keyword(user.id, "respiration", top_k=5, group_id=uuid.uuid4()) == []
+
+
+@pytest.mark.asyncio
+async def test_search_keyword_ungrouped_excludes_grouped_documents(db_session):
+    user, ungrouped_doc = await _user_and_doc(db_session)
+    _, grouped_doc = await _user_and_doc(db_session)
+    grouped_doc.user_id = user.id
+    group = Group(user_id=user.id, name="BIO")
+    db_session.add(group)
+    await db_session.flush()
+    grouped_doc.group_id = group.id
+    repo = ChunkRepository(db_session)
+    await repo.add_many(
+        [
+            dict(document_id=ungrouped_doc.id, user_id=user.id, chunk_index=0,
+                 content="cellular respiration ungrouped",
+                 content_hash=hash_content("resp-ungrouped"), embedding=_vec(0)),
+            dict(document_id=grouped_doc.id, user_id=user.id, chunk_index=0,
+                 content="cellular respiration grouped",
+                 content_hash=hash_content("resp-grouped"), embedding=_vec(0)),
+        ]
+    )
+    await db_session.commit()
+    results = await repo.search_keyword(user.id, "respiration", top_k=5, group_id=None)
+    assert [r.content for r in results] == ["cellular respiration ungrouped"]
 
 
 @pytest.mark.asyncio
