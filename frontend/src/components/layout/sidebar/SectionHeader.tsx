@@ -14,7 +14,13 @@ interface SectionHeaderProps {
 // Shared collapsible-section header for both a group section and the
 // Ungrouped section — the "+" (new chat in this section) and optional
 // "..." menu slot are the only pieces that differ between the two.
-export function SectionHeader({ title, isCollapsed, onToggle, onNewChat, menu }: SectionHeaderProps) {
+export function SectionHeader({
+  title,
+  isCollapsed,
+  onToggle,
+  onNewChat,
+  menu,
+}: SectionHeaderProps) {
   return (
     <div className="group/section flex items-center gap-1 px-1">
       <button

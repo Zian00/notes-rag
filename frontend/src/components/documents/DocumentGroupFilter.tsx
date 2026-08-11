@@ -2,7 +2,10 @@ import { useId } from "react"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useGroups } from "@/api/hooks/useGroups"
-import { GROUP_OPTION_CLASSNAME, GROUP_SELECT_CLASSNAME } from "@/components/documents/groupSelectStyles"
+import {
+  GROUP_OPTION_CLASSNAME,
+  GROUP_SELECT_CLASSNAME,
+} from "@/components/documents/groupSelectStyles"
 
 // Sentinel <option> value distinct from any real group UUID — never sent to
 // the backend, only used to interpret the native <select>'s onChange as "no
