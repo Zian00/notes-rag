@@ -1,7 +1,7 @@
 # Sidebar Drag-and-Drop, Chat-Native Upload, and Documents Redesign
 
 **Date:** 2026-08-11
-**Status:** Draft, awaiting review
+**Status:** Grilled and resolved (2026-08-11) — ready for ticketing
 **Scope:** drag-and-drop chat reordering into groups (`frontend/src/components/layout/sidebar/`), a
 new file-attach affordance in `ChatInput` that uploads a document inline and auto-assigns its
 group, and a redesign of `DocumentsPage` around browsing rather than uploading. New dependency:
@@ -73,6 +73,10 @@ in the first place.)
   no-op.
 - Drop calls the same `useUpdateConversation({ id, groupId })` mutation the "Move to" menu already
   uses — no new backend endpoint.
+- **`UngroupedSection` is a valid drop target too**, for symmetry with dropping into a real group —
+  dropping a chat there calls `useUpdateConversation({ id, groupId: null })`, ungrouping it. It
+  needs to become a `useDroppable` target the same as `GroupSection`, which it isn't wired as
+  today.
 - Visual feedback: dragged row gets reduced opacity + a drag overlay (dnd-kit's `DragOverlay`)
   following the cursor; the hovered drop target gets a highlighted border/background.
 - **The "Move to" menu item stays** — it's not replaced, because dnd-kit's keyboard mode requires
@@ -106,11 +110,22 @@ file picker (same accept-list as `UploadDropzone`: PDF/DOCX/TXT/MD, same size ca
 3. **Group assignment on attach:**
    - If the current chat **already has a group** (existing conversation, or a brand-new chat
      started from within a group section), the file is uploaded straight into that group — no
-     prompt.
-   - If the current chat is **ungrouped**, uploading a file prompts once (a small inline popover
+     prompt. For a brand-new chat that hasn't been sent yet (no conversation row exists server-
+     side per T4), "the current chat's group" means `ChatPage`'s local `pendingGroupIdRef` — the
+     same value that becomes the new conversation's `group_id` on first send. Attaching before
+     sending is legitimate because `Document.group_id` doesn't require a conversation to exist.
+   - If the current chat is **ungrouped**, uploading a file prompts (a small inline **popover**
      anchored to the chip, reusing `GroupSelect`) — "Add to a group?" with the same
      None/existing-groups/+New-group options as the Documents page. Choosing "None" is valid and
-     leaves it ungrouped like today's default.
+     leaves it ungrouped like today's default. **This prompt re-appears on every attach** while
+     the chat stays ungrouped (not just the first) — simpler than persisting a per-chat
+     "don't ask again" flag, and staying ungrouped is the common case so the extra click is cheap.
+     A popover, not a modal, was chosen deliberately: it doesn't block the rest of the screen and
+     dismisses on outside click, matching `GroupSelect`'s existing inline pattern.
+   - **Group scoping matters here**: per [ADR-0001](../adr/0001-chat-attached-documents-are-group-scoped.md),
+     an attached document is a normal group-scoped `Document`, not tied to the conversation it was
+     attached from — it becomes retrievable by every chat in that group (or, per issue #9 once
+     fixed, only by other ungrouped chats if attached with "None").
 4. The chip is dismissible (a small "x") — removing it does **not** delete the document (it's
    already a real row in Documents), it just clears it from the composer; this matches "attach is
    a shortcut to upload," not "attach is a temporary staging area."
@@ -161,14 +176,22 @@ two.
   upload exists)*: list-first layout, group filter on `DocumentList`, upload form moves into a
   dialog behind a header action.
 
-## 7. Open questions for review
+## 7. Resolved (grilled 2026-08-11)
 
-- **T9**: should a group section itself show a "drop here" empty-state hint even when it has
-  chats, or only when empty? (Cosmetic, low-stakes — default to always-hoverable, decide visuals
-  at implementation time.)
-- **T10**: exact wording/UX of the one-time group-assignment prompt for an ungrouped chat's first
-  attach — inline popover vs. a small modal. Leaning popover (lighter weight); confirm before
-  building.
-- **T11**: group filter as a dropdown (like Sidebar's old flat filter) vs. the same collapsible-
-  sections layout the Sidebar uses for chats — the latter is more consistent but is more work.
-  Flagged as TBD in §5, needs a decision before T11 starts.
+- **T9**: every section is always-hoverable as a drop target (not just when empty) — cosmetic,
+  low-stakes, matches the doc's original default. `UngroupedSection` is included (see §3.2).
+- **T10**: inline **popover** (not a modal), reusing `GroupSelect`'s pattern — lighter weight,
+  doesn't block the screen. It re-prompts on every attach while the chat stays ungrouped, not
+  just the first (see §4.2).
+- **T11**: **dropdown** filter for the first cut, not Sidebar-style collapsible sections —
+  Documents is a flat list today with no section concept, so a dropdown is strictly additive.
+  Migrating to sections is a separable follow-up if the flat list feels cramped later.
+
+## 8. Related work found during review
+
+While grilling this doc, verifying "a grouped chat only retrieves that group's documents" (the
+premise groups exist for) surfaced that **ungrouped chats currently apply no group filter at all**
+— they search every document the user owns, across every group, defeating the point of grouping.
+This is a defect in already-shipped T1-T4 behavior, unrelated to T9-T11's scope (none of drag-and-
+drop, chat-upload, or the Documents redesign touch retrieval) — filed separately as
+[issue #9](https://github.com/Zian00/notes-rag/issues/9), not a blocker for T9/T10/T11.
