@@ -88,22 +88,19 @@ def build_tools(
 
     @tool
     async def list_documents(
-        course: str | None = None,
         *,
         config: RunnableConfig,
     ) -> list[dict[str, Any]]:
-        """List the user's uploaded documents (id, title, filename, course).
+        """List the user's uploaded documents (id, title, filename, group_id).
         Use to answer 'what notes do I have?' or to find a document's id before summarising it."""
         async with sessionmaker() as session:
-            docs = await DocumentRepository(session).list_for_user(
-                _user_id(config), course=course
-            )
+            docs = await DocumentRepository(session).list_for_user(_user_id(config))
         return [
             {
                 "document_id": str(d.id),
                 "title": d.title,
                 "filename": d.filename,
-                "course": d.course,
+                "group_id": str(d.group_id) if d.group_id else None,
             }
             for d in docs
         ]

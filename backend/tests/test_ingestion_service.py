@@ -44,7 +44,7 @@ async def test_stage_creates_pending_document_without_chunks(db_session, tmp_pat
 
     doc = await svc.stage(
         user_id=user.id, filename="notes.txt", content_type="text/plain",
-        data=b"some text", title="T", course="BIO", tags=["x"],
+        data=b"some text", title="T", group_id=None, tags=["x"],
     )
 
     assert doc.status == "pending"

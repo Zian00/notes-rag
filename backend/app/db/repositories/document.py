@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,20 +7,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.repositories.base import BaseRepository
 from app.models.document import Document
 
+# Sentinel distinguishing "field omitted" from "field set to None" in partial updates —
+# None is a real value for group_id (ungroup), so it can't double as "leave unchanged".
+UNSET: Any = object()
+
 
 class DocumentRepository(BaseRepository[Document]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Document, session)
 
     async def list_for_user(
-        self, user_id: uuid.UUID, course: str | None = None
+        self, user_id: uuid.UUID, group_id: uuid.UUID | None = None
     ) -> list[Document]:
         stmt = select(Document).where(Document.user_id == user_id)
-        if course is not None:
-            stmt = stmt.where(Document.course == course)
+        if group_id is not None:
+            stmt = stmt.where(Document.group_id == group_id)
         stmt = stmt.order_by(Document.created_at.desc())
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def update_metadata(
+        self,
+        document_id: uuid.UUID,
+        *,
+        group_id: uuid.UUID | None = UNSET,
+        tags: list[str] | None = UNSET,
+    ) -> None:
+        """Partial update of editable metadata; only fields passed (not UNSET) are written."""
+        doc = await self.get(document_id)
+        if doc is None:
+            return
+        if group_id is not UNSET:
+            doc.group_id = group_id
+        if tags is not UNSET:
+            doc.tags = tags or []
+        await self._session.flush()
 
     async def get_for_user(
         self, document_id: uuid.UUID, user_id: uuid.UUID

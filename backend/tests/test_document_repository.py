@@ -3,6 +3,7 @@ import uuid
 import pytest
 from app.db.repositories.document import DocumentRepository
 from app.db.repositories.user import UserRepository
+from app.models.group import Group
 from app.models.user import User
 
 
@@ -33,15 +34,18 @@ def _doc_kwargs(user_id: uuid.UUID, **over: object) -> dict:
 @pytest.mark.asyncio
 async def test_create_and_list_for_user(db_session):
     user = await _user(db_session)
+    group = Group(user_id=user.id, name="BIO")
+    db_session.add(group)
+    await db_session.flush()
     repo = DocumentRepository(db_session)
     await repo.create(**_doc_kwargs(user.id, filename="a.pdf"))
-    await repo.create(**_doc_kwargs(user.id, filename="b.pdf", course="BIO"))
+    await repo.create(**_doc_kwargs(user.id, filename="b.pdf", group_id=group.id))
     await db_session.commit()
 
     docs = await repo.list_for_user(user.id)
     assert {d.filename for d in docs} == {"a.pdf", "b.pdf"}
 
-    bio = await repo.list_for_user(user.id, course="BIO")
+    bio = await repo.list_for_user(user.id, group_id=group.id)
     assert [d.filename for d in bio] == ["b.pdf"]
 
 

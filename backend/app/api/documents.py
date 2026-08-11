@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_current_user,
+    get_document_service,
     get_enqueue_processing,
     get_enqueue_replace,
     get_ingestion_service,
@@ -18,9 +19,12 @@ from app.models.user import User
 from app.rag.storage import LocalFileStorage
 from app.schemas.document import (
     DocumentResponse,
+    DocumentUpdate,
     DuplicateDocumentResponse,
     ReplaceDocumentResponse,
 )
+from app.services.document import DocumentNotFound, DocumentService
+from app.services.group import GroupNotFound
 from app.services.ingestion import DocumentBusy, DuplicateDocument, IngestionService
 from app.utils.files import sanitize_filename, sniff_content_type
 
@@ -36,10 +40,11 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),  # noqa: B008
     title: str | None = Form(default=None),  # noqa: B008
-    course: str | None = Form(default=None),  # noqa: B008
+    group_id: uuid.UUID | None = Form(default=None),  # noqa: B008
     tags: list[str] | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    document_service: DocumentService = Depends(get_document_service),  # noqa: B008
     enqueue: Callable[[uuid.UUID], Awaitable[None]] = Depends(get_enqueue_processing),  # noqa: B008
 ) -> DocumentResponse | JSONResponse:
     settings = get_settings()
@@ -55,6 +60,12 @@ async def upload_document(
     if content_type is None or content_type not in settings.allowed_content_types:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported file type")
 
+    # Reject an unknown/foreign group before saving any bytes.
+    try:
+        await document_service.ensure_group_owned(group_id, current_user.id)
+    except GroupNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
+
     try:
         document = await service.stage(
             user_id=current_user.id,
@@ -62,7 +73,7 @@ async def upload_document(
             content_type=content_type,
             data=data,
             title=title,
-            course=course,
+            group_id=group_id,
             tags=tags,
         )
     except DuplicateDocument as exc:
@@ -80,21 +91,47 @@ async def upload_document(
 
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
-    course: str | None = None,
+    group_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),  # noqa: B008
     session: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> list[DocumentResponse]:
-    docs = await DocumentRepository(session).list_for_user(current_user.id, course=course)
+    docs = await DocumentRepository(session).list_for_user(current_user.id, group_id=group_id)
     return [DocumentResponse.model_validate(d) for d in docs]
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+async def update_document(
+    document_id: uuid.UUID,
+    body: DocumentUpdate,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    document_service: DocumentService = Depends(get_document_service),  # noqa: B008
+) -> DocumentResponse:
+    # Forward only fields the client sent — model_fields_set keeps an omitted
+    # group_id (leave as-is) distinct from an explicit null (ungroup).
+    kwargs: dict = {}
+    if "group_id" in body.model_fields_set:
+        kwargs["group_id"] = body.group_id
+    if "tags" in body.model_fields_set:
+        kwargs["tags"] = body.tags
+    try:
+        doc = await document_service.update_metadata(document_id, current_user.id, **kwargs)
+    except DocumentNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found") from None
+    except GroupNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
+    return DocumentResponse.model_validate(doc)
 
 
 @router.post("/{document_id}/replace", response_model=ReplaceDocumentResponse)
 async def replace_document(
     document_id: uuid.UUID,
     file: UploadFile = File(...),  # noqa: B008
+    group_id: uuid.UUID | None = Form(default=None),  # noqa: B008
+    tags: list[str] | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     session: AsyncSession = Depends(get_db),  # noqa: B008
     service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    document_service: DocumentService = Depends(get_document_service),  # noqa: B008
     enqueue: Callable[[uuid.UUID, str, str, int], Awaitable[None]] = Depends(get_enqueue_replace),  # noqa: B008
 ) -> ReplaceDocumentResponse:
     # Ownership check up front — a missing OR not-yours id both 404, same pattern
@@ -106,6 +143,20 @@ async def replace_document(
     data = await file.read()
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
+
+    # Optional metadata edit alongside the file swap. Multipart form can't express
+    # "explicit null", so a provided group_id/tags is applied and omission leaves it
+    # unchanged; ungrouping specifically goes through PATCH /documents/{id}.
+    if group_id is not None or tags is not None:
+        meta_kwargs: dict = {}
+        if group_id is not None:
+            meta_kwargs["group_id"] = group_id
+        if tags is not None:
+            meta_kwargs["tags"] = tags
+        try:
+            await document_service.update_metadata(document_id, current_user.id, **meta_kwargs)
+        except GroupNotFound:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
 
     try:
         staged = await service.stage_replace(document_id, data)

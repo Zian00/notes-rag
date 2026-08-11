@@ -94,7 +94,7 @@ class IngestionService:
         content_type: str,
         data: bytes,
         title: str | None = None,
-        course: str | None = None,
+        group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
     ) -> Document:
         """Fast, synchronous half of ingestion — safe to call inline in the request.
@@ -111,7 +111,7 @@ class IngestionService:
                 user_id=user_id,
                 filename=filename,
                 title=title,
-                course=course,
+                group_id=group_id,
                 tags=tags or [],
                 content_type=content_type,
                 content_hash=content_hash,

@@ -28,6 +28,7 @@ from app.rag.semantic_chunking import SemanticChunker
 from app.rag.storage import LocalFileStorage, StorageBackend
 from app.services.auth import AuthService
 from app.services.chat import ChatService
+from app.services.document import DocumentService
 from app.services.group import GroupService
 from app.services.ingestion import IngestionService
 from app.services.retrieval import RetrievalService
@@ -51,6 +52,14 @@ def get_group_service(session: AsyncSession = Depends(get_db)) -> GroupService: 
         GroupRepository(session),
         ConversationRepository(session),
         DocumentRepository(session),
+    )
+
+
+def get_document_service(session: AsyncSession = Depends(get_db)) -> DocumentService:  # noqa: B008
+    return DocumentService(
+        session,
+        DocumentRepository(session),
+        GroupRepository(session),
     )
 
 

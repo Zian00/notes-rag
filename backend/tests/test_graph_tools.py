@@ -157,38 +157,6 @@ async def test_list_documents_scoped(_engine: AsyncEngine) -> None:
     assert str(doc_a.id) not in b_ids
 
 
-@pytest.mark.asyncio
-async def test_list_documents_course_filter(_engine: AsyncEngine) -> None:
-    """list_documents respects the optional course filter."""
-    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-    async with maker() as session:
-        user, doc_cs = await _seed_user_and_doc(session, course="CS101")
-        # Second document for the same user, no course.
-        doc_other = await DocumentRepository(session).create(
-            user_id=user.id,
-            filename="other.pdf",
-            title="Other Notes",
-            course=None,
-            content_type="application/pdf",
-            content_hash=uuid.uuid4().hex,
-            storage_path="/tmp/other.pdf",
-            file_size=1,
-            chunk_count=0,
-            embedding_model="test",
-            embedding_dimension=DIM,
-        )
-        await session.commit()
-
-    tools = build_tools(FakeEmbeddingsProvider(DIM), maker, default_top_k=5)
-    list_docs = next(t for t in tools if t.name == "list_documents")
-
-    config = {"configurable": {"user_id": user.id}}
-    result = await list_docs.ainvoke({"course": "CS101"}, config=config)
-    ids = [r["document_id"] for r in result]
-    assert str(doc_cs.id) in ids
-    assert str(doc_other.id) not in ids
-
-
 # ---------------------------------------------------------------------------
 # Tests — get_document_content
 # ---------------------------------------------------------------------------

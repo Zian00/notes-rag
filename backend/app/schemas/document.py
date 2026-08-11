@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DocumentResponse(BaseModel):
@@ -14,7 +14,8 @@ class DocumentResponse(BaseModel):
     id: UUID
     filename: str
     title: str | None
-    course: str | None
+    # Group this document belongs to; None = ungrouped. Replaces the old `course`.
+    group_id: UUID | None
     tags: list[str]
     content_type: str
     page_count: int | None
@@ -26,6 +27,24 @@ class DocumentResponse(BaseModel):
     embedding_dimension: int
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentUpdate(BaseModel):
+    """PATCH body for a document's editable metadata (group + tags).
+
+    PATCH semantics via model_fields_set: a field is applied only when the client
+    sends it — omitting `group_id` leaves the group as-is, sending `group_id: null`
+    ungroups the document.
+    """
+
+    group_id: uuid.UUID | None = None
+    tags: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one(self) -> "DocumentUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Provide group_id and/or tags.")
+        return self
 
 
 class DuplicateDocumentResponse(BaseModel):

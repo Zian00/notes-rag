@@ -1,4 +1,5 @@
 import inspect
+import uuid
 
 import pytest
 
@@ -57,13 +58,15 @@ async def test_upload_list_delete_flow(auth_client):
     # Delete now rejects a still-pending/processing document (race guard) — process
     # it synchronously first so it reaches 'ready', matching real-world sequencing.
     _enqueue_synchronously(auth_client)
+    gid = (await auth_client.post("/groups", json={"name": "BIO"})).json()["id"]
     files = {"file": ("notes.txt", b"alpha beta gamma. delta epsilon.", "text/plain")}
     resp = await auth_client.post(
-        "/documents", files=files, data={"title": "My Notes", "course": "BIO"}
+        "/documents", files=files, data={"title": "My Notes", "group_id": gid}
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["title"] == "My Notes"
+    assert body["group_id"] == gid  # upload assigned the group
     # stage() only persists the document row; chunking/embedding now happens later
     # in the background process() job, so right after upload the doc is 'pending'.
     assert body["status"] == "pending"
@@ -74,7 +77,7 @@ async def test_upload_list_delete_flow(auth_client):
     assert listed.status_code == 200
     assert any(d["id"] == doc_id for d in listed.json())
 
-    filtered = await auth_client.get("/documents", params={"course": "BIO"})
+    filtered = await auth_client.get("/documents", params={"group_id": gid})
     assert [d["id"] for d in filtered.json()] == [doc_id]
 
     deleted = await auth_client.delete(f"/documents/{doc_id}")
@@ -150,6 +153,75 @@ async def test_duplicate_upload_returns_409(auth_client):
     again = await auth_client.post("/documents", files={"file": ("a.txt", data, "text/plain")})
     assert again.status_code == 409
     assert again.json()["document_id"] == first.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_patch_document_group_and_tags(auth_client):
+    """PATCH edits a document's group + tags; explicit null ungroups; omitted is untouched."""
+    gid = (await auth_client.post("/groups", json={"name": "CS"})).json()["id"]
+    files = {"file": ("n.txt", b"hello world", "text/plain")}
+    doc_id = (await auth_client.post("/documents", files=files)).json()["id"]
+
+    resp = await auth_client.patch(
+        f"/documents/{doc_id}", json={"group_id": gid, "tags": ["a", "b"]}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["group_id"] == gid
+    assert resp.json()["tags"] == ["a", "b"]
+
+    # Explicit null ungroups; tags omitted → left as-is.
+    resp = await auth_client.patch(f"/documents/{doc_id}", json={"group_id": None})
+    assert resp.status_code == 200
+    assert resp.json()["group_id"] is None
+    assert resp.json()["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_document_group_must_belong_to_user(auth_client):
+    """Upload into, or PATCH into, another user's group is rejected with 404."""
+    token_a = auth_client.headers["Authorization"]
+
+    # User B owns a group A must not be able to target.
+    b_email = f"docs-b-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+    b_gid = (await auth_client.post("/groups", json={"name": "B-group"})).json()["id"]
+
+    # Back to A: uploading into B's group → 404 (and a non-existent group → 404).
+    auth_client.headers["Authorization"] = token_a
+    files = {"file": ("n.txt", b"hello world", "text/plain")}
+    resp = await auth_client.post("/documents", files=files, data={"group_id": b_gid})
+    assert resp.status_code == 404
+
+    other = {"file": ("m.txt", b"other data", "text/plain")}
+    doc_id = (await auth_client.post("/documents", files=other)).json()["id"]
+    assert (
+        await auth_client.patch(f"/documents/{doc_id}", json={"group_id": b_gid})
+    ).status_code == 404
+    assert (
+        await auth_client.patch(f"/documents/{doc_id}", json={"group_id": str(uuid.uuid4())})
+    ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_document_not_owned_404(auth_client):
+    """User B cannot PATCH user A's document."""
+    files = {"file": ("n.txt", b"hello world", "text/plain")}
+    doc_id = (await auth_client.post("/documents", files=files)).json()["id"]
+
+    b_email = f"docs-iso-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+
+    assert (
+        await auth_client.patch(f"/documents/{doc_id}", json={"tags": ["x"]})
+    ).status_code == 404
 
 
 @pytest.mark.asyncio
