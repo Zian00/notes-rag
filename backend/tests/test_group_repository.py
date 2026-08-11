@@ -20,7 +20,9 @@ async def _make_user(session: AsyncSession) -> uuid.UUID:
     return user.id
 
 
-async def _make_document(session: AsyncSession, user_id: uuid.UUID, group_id: uuid.UUID) -> Document:
+async def _make_document(
+    session: AsyncSession, user_id: uuid.UUID, group_id: uuid.UUID
+) -> Document:
     """Insert a minimal ready document assigned to a group."""
     doc = Document(
         user_id=user_id,
