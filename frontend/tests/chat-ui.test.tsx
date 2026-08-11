@@ -37,6 +37,7 @@ const API_BASE = `${window.location.origin}/api`
 
 type ConversationResponse = components["schemas"]["ConversationResponse"]
 type ConversationDetail = components["schemas"]["ConversationDetail"]
+type GroupResponse = components["schemas"]["GroupResponse"]
 
 const mockUser = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -48,6 +49,7 @@ const mockUser = {
 const convo1: ConversationResponse = {
   id: "11111111-1111-1111-1111-111111111111",
   title: "First chat",
+  group_id: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }
@@ -69,6 +71,9 @@ function mockAuthed() {
     ),
     http.get(`${API_BASE}/auth/me`, () => HttpResponse.json(mockUser)),
     http.get(`${API_BASE}/conversations`, () => HttpResponse.json([])),
+    // Sidebar always renders group sections, so every test needs a default
+    // /groups response even when groups aren't what's under test.
+    http.get(`${API_BASE}/groups`, () => HttpResponse.json([])),
     // Catch-all so a new-chat's post-send navigation to /chat/:id (which mounts
     // useConversation for that fresh id) doesn't trip MSW's unhandled-request
     // warning; ChatPage's seed-when-empty guard means this 404 is harmless —
@@ -657,5 +662,157 @@ describe("Sidebar conversation list", () => {
     await user.click(within(dialog).getByRole("button", { name: /delete/i }))
 
     expect(await screen.findByText(/deleted/i)).toBeInTheDocument()
+  })
+})
+
+describe("Sidebar groups", () => {
+  const group1: GroupResponse = {
+    id: "33333333-3333-3333-3333-333333333333",
+    name: "CS101",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+
+  const groupedConvo: ConversationResponse = {
+    ...convo1,
+    id: "44444444-4444-4444-4444-444444444444",
+    title: "Grouped chat",
+    group_id: group1.id,
+  }
+
+  it("renders chats under their group section and Ungrouped, and collapses a section", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1])),
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json([groupedConvo, convo1]))
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const groupHeader = await screen.findByRole("button", { name: "CS101" })
+    const ungroupedHeader = screen.getByRole("button", { name: "Ungrouped" })
+    expect(screen.getByRole("link", { name: /grouped chat/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /first chat/i })).toBeInTheDocument()
+
+    expect(groupHeader).toHaveAttribute("aria-expanded", "true")
+    await user.click(groupHeader)
+    expect(groupHeader).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByRole("link", { name: /grouped chat/i })).not.toBeInTheDocument()
+    // The other section is untouched by collapsing this one.
+    expect(ungroupedHeader).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("link", { name: /first chat/i })).toBeInTheDocument()
+  })
+
+  it("creates a new group via the inline form", async () => {
+    mockAuthed()
+    // GET /groups must reflect the just-created group on refetch (useCreateGroup's
+    // onSuccess invalidates the list) — a static response wouldn't show the update.
+    let groupsState: GroupResponse[] = []
+    let createdBody: unknown
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json(groupsState)),
+      http.post(`${API_BASE}/groups`, async ({ request }) => {
+        createdBody = await request.json()
+        groupsState = [...groupsState, group1]
+        return HttpResponse.json(group1, { status: 200 })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await user.click(await screen.findByRole("button", { name: /new group/i }))
+    const input = screen.getByPlaceholderText(/group name/i)
+    await user.type(input, "CS101")
+    await user.keyboard("{Enter}")
+
+    await waitFor(() => expect(createdBody).toEqual({ name: "CS101" }))
+    expect(await screen.findByRole("button", { name: "CS101" })).toBeInTheDocument()
+  })
+
+  it("renames a group inline", async () => {
+    mockAuthed()
+    // Same rationale as the create test — the post-rename refetch needs the
+    // renamed group, not a frozen initial snapshot.
+    let groupsState: GroupResponse[] = [group1]
+    let renamedBody: unknown
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json(groupsState)),
+      http.patch(`${API_BASE}/groups/${group1.id}`, async ({ request }) => {
+        renamedBody = await request.json()
+        const renamed = { ...group1, name: "CS102" }
+        groupsState = [renamed]
+        return HttpResponse.json(renamed)
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await user.click(await screen.findByRole("button", { name: `${group1.name} options` }))
+    await user.click(await screen.findByRole("menuitem", { name: /rename/i }))
+
+    const input = screen.getByDisplayValue(group1.name)
+    await user.clear(input)
+    await user.type(input, "CS102")
+    await user.keyboard("{Enter}")
+
+    await waitFor(() => expect(renamedBody).toEqual({ name: "CS102" }))
+    expect(await screen.findByRole("button", { name: "CS102" })).toBeInTheDocument()
+  })
+
+  it("deletes a group and reports the orphan counts", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1])),
+      http.get(`${API_BASE}/conversations`, () => HttpResponse.json([groupedConvo])),
+      http.delete(
+        `${API_BASE}/groups/${group1.id}`,
+        () => HttpResponse.json({ chats_ungrouped: 1, documents_ungrouped: 2 })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await user.click(await screen.findByRole("button", { name: `${group1.name} options` }))
+    await user.click(await screen.findByRole("menuitem", { name: /delete/i }))
+
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }))
+
+    expect(await screen.findByText(/1 chat\(s\) and 2 document\(s\)/i)).toBeInTheDocument()
+  })
+
+  it("starting a new chat from within a group section carries that group's id on the first send", async () => {
+    mockAuthed()
+    let capturedGroupId: string | null | undefined
+    server.use(http.get(`${API_BASE}/groups`, () => HttpResponse.json([group1])))
+    mockStreamChat.mockImplementation((body) => {
+      capturedGroupId = body.group_id
+      return scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "ok" } },
+        { event: "done", data: {} },
+      ])()
+    })
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    await user.click(await screen.findByRole("button", { name: `Start chat in ${group1.name}` }))
+
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "scoped question")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    await waitFor(() => expect(capturedGroupId).toBe(group1.id))
+
+    // A follow-up turn in the same (now-existing) conversation must NOT resend
+    // the group id — the backend only honors it at conversation creation.
+    await user.type(textbox, "follow up")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    await waitFor(() => expect(capturedGroupId).toBeUndefined())
   })
 })

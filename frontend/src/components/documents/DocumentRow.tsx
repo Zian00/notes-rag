@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -86,7 +85,8 @@ export function DocumentRow({ document }: DocumentRowProps) {
           </p>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {document.course && <Badge variant="secondary">{document.course}</Badge>}
+          {/* Group name display awaits T8's group picker/lookup — document.group_id is
+              just an id here, not a name worth rendering on its own. */}
           <span>{document.chunk_count} chunks</span>
           <span aria-hidden="true">&middot;</span>
           <span>{formatFileSize(document.file_size)}</span>

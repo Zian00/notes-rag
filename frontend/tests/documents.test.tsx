@@ -20,7 +20,7 @@ const doc1: DocumentResponse = {
   id: "11111111-1111-1111-1111-111111111111",
   filename: "notes1.pdf",
   title: "Notes 1",
-  course: "cs101",
+  group_id: "33333333-3333-3333-3333-333333333333",
   tags: ["week1"],
   content_type: "application/pdf",
   page_count: 3,
@@ -77,19 +77,21 @@ describe("useDocuments", () => {
     expect(result.current.data).toEqual([doc1, doc2])
   })
 
-  it("sends the course filter as a query param", async () => {
-    let capturedCourse: string | null = null
+  it("sends the group filter as a query param", async () => {
+    let capturedGroupId: string | null = null
     server.use(
       http.get(`${API_BASE}/documents`, ({ request }) => {
-        capturedCourse = new URL(request.url).searchParams.get("course")
+        capturedGroupId = new URL(request.url).searchParams.get("group_id")
         return HttpResponse.json([doc1])
       })
     )
 
-    const { result } = renderHook(() => useDocuments("cs101"), { wrapper: createWrapper() })
+    const { result } = renderHook(() => useDocuments(doc1.group_id ?? undefined), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(capturedCourse).toBe("cs101")
+    expect(capturedGroupId).toBe(doc1.group_id)
     expect(result.current.data).toEqual([doc1])
   })
 

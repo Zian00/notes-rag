@@ -15,9 +15,12 @@ export interface ChatMessage {
 }
 
 export interface ChatSendFilters {
-  course?: string
   tags?: string[]
   topK?: number
+  // Only honored when this send() call creates a brand-new conversation (see
+  // ChatRequest.group_id server-side) — pre-assigns the chat to a sidebar group
+  // section. Ignored on every later turn of that same conversation.
+  groupId?: string
 }
 
 export interface UseChatOptions {
@@ -213,7 +216,7 @@ export function useChat(options?: UseChatOptions): UseChatResult {
           {
             question: trimmed,
             conversation_id: activeConversationIdRef.current,
-            course: filters?.course,
+            group_id: isNewChat ? filters?.groupId : undefined,
             tags: filters?.tags,
             top_k: filters?.topK,
           },

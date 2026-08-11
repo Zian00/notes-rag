@@ -8,7 +8,7 @@ import { useUploadDocument } from "@/api/hooks/useDocuments"
 import { UploadError } from "@/api/uploadError"
 import { parseTags } from "@/lib/format"
 
-const EMPTY_METADATA: MetadataValues = { title: "", course: "", tags: "" }
+const EMPTY_METADATA: MetadataValues = { title: "", tags: "" }
 
 // Maps a failed upload's HTTP status to a message a user can act on, per the
 // backend's documented error cases (400 unsupported/empty, 413 too large,
@@ -38,7 +38,6 @@ export function DocumentsPage() {
       await uploadDocument.mutateAsync({
         file,
         title: metadata.title.trim() || undefined,
-        course: metadata.course.trim() || undefined,
         tags: parseTags(metadata.tags),
       })
       toast.success(`Uploaded "${file.name}".`)

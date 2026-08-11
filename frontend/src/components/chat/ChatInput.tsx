@@ -22,12 +22,10 @@ const TOP_K_MAX = 20
 export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
   const [value, setValue] = useState("")
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
-  const [course, setCourse] = useState("")
   const [tags, setTags] = useState("")
   const [topK, setTopK] = useState("")
 
   const textareaId = useId()
-  const courseId = useId()
   const tagsId = useId()
   const topKId = useId()
 
@@ -50,7 +48,6 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
         : undefined
 
     onSend(value, {
-      course: course.trim() || undefined,
       tags: parsedTags.length > 0 ? parsedTags : undefined,
       topK: validTopK,
     })
@@ -82,11 +79,7 @@ export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
         </button>
 
         {isFiltersOpen && (
-          <div className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-3">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={courseId}>Course</Label>
-              <Input id={courseId} value={course} onChange={(event) => setCourse(event.target.value)} placeholder="e.g. cs101" />
-            </div>
+          <div className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <Label htmlFor={tagsId}>Tags (comma-separated)</Label>
               <Input id={tagsId} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="week1, midterm" />

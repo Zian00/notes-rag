@@ -124,23 +124,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/documents/{document_id}/replace": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Replace Document */
-        post: operations["replace_document_documents__document_id__replace_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -153,6 +136,24 @@ export interface paths {
         post?: never;
         /** Delete Document */
         delete: operations["delete_document_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Document */
+        patch: operations["update_document_documents__document_id__patch"];
+        trace?: never;
+    };
+    "/documents/{document_id}/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace Document */
+        post: operations["replace_document_documents__document_id__replace_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -224,7 +225,44 @@ export interface paths {
         delete: operations["delete_conversation_conversations__conversation_id__delete"];
         options?: never;
         head?: never;
+        /** Update Conversation */
+        patch: operations["update_conversation_conversations__conversation_id__patch"];
+        trace?: never;
+    };
+    "/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Groups */
+        get: operations["list_groups_groups_get"];
+        put?: never;
+        /** Create Group */
+        post: operations["create_group_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Group */
+        delete: operations["delete_group_groups__group_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Group */
+        patch: operations["rename_group_groups__group_id__patch"];
         trace?: never;
     };
 }
@@ -235,6 +273,10 @@ export interface components {
         Body_replace_document_documents__document_id__replace_post: {
             /** File */
             file: string;
+            /** Group Id */
+            group_id?: string | null;
+            /** Tags */
+            tags?: string[] | null;
         };
         /** Body_upload_document_documents_post */
         Body_upload_document_documents_post: {
@@ -242,8 +284,8 @@ export interface components {
             file: string;
             /** Title */
             title?: string | null;
-            /** Course */
-            course?: string | null;
+            /** Group Id */
+            group_id?: string | null;
             /** Tags */
             tags?: string[] | null;
         };
@@ -253,8 +295,8 @@ export interface components {
             question: string;
             /** Conversation Id */
             conversation_id?: string | null;
-            /** Course */
-            course?: string | null;
+            /** Group Id */
+            group_id?: string | null;
             /** Tags */
             tags?: string[] | null;
             /** Top K */
@@ -314,6 +356,8 @@ export interface components {
             id: string;
             /** Title */
             title: string | null;
+            /** Group Id */
+            group_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -336,6 +380,8 @@ export interface components {
             id: string;
             /** Title */
             title: string | null;
+            /** Group Id */
+            group_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -346,6 +392,20 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ConversationUpdate
+         * @description PATCH body: rename and/or move a conversation.
+         *
+         *     PATCH semantics — a field is only touched when the client actually sends it
+         *     (tracked via model_fields_set): omitting `group_id` leaves the group as-is,
+         *     while sending `group_id: null` explicitly moves the chat to ungrouped.
+         */
+        ConversationUpdate: {
+            /** Title */
+            title?: string | null;
+            /** Group Id */
+            group_id?: string | null;
         };
         /** DocumentResponse */
         DocumentResponse: {
@@ -358,8 +418,8 @@ export interface components {
             filename: string;
             /** Title */
             title: string | null;
-            /** Course */
-            course: string | null;
+            /** Group Id */
+            group_id: string | null;
             /** Tags */
             tags: string[];
             /** Content Type */
@@ -390,6 +450,20 @@ export interface components {
             updated_at: string;
         };
         /**
+         * DocumentUpdate
+         * @description PATCH body for a document's editable metadata (group + tags).
+         *
+         *     PATCH semantics via model_fields_set: a field is applied only when the client
+         *     sends it — omitting `group_id` leaves the group as-is, sending `group_id: null`
+         *     ungroups the document.
+         */
+        DocumentUpdate: {
+            /** Group Id */
+            group_id?: string | null;
+            /** Tags */
+            tags?: string[] | null;
+        };
+        /**
          * DuplicateDocumentResponse
          * @description Documents the 409 response body when a file has already been ingested.
          */
@@ -404,6 +478,43 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
+        };
+        /** GroupCreate */
+        GroupCreate: {
+            /** Name */
+            name: string;
+        };
+        /** GroupDeleteResponse */
+        GroupDeleteResponse: {
+            /** Chats Ungrouped */
+            chats_ungrouped: number;
+            /** Documents Ungrouped */
+            documents_ungrouped: number;
+        };
+        /** GroupResponse */
+        GroupResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** GroupUpdate */
+        GroupUpdate: {
+            /** Name */
+            name: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -473,8 +584,8 @@ export interface components {
              * @default 5
              */
             top_k: number;
-            /** Course */
-            course?: string | null;
+            /** Group Id */
+            group_id?: string | null;
             /** Tags */
             tags?: string[] | null;
         };
@@ -700,7 +811,7 @@ export interface operations {
     list_documents_documents_get: {
         parameters: {
             query?: {
-                course?: string | null;
+                group_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -770,6 +881,70 @@ export interface operations {
             };
         };
     };
+    delete_document_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_document_documents__document_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     replace_document_documents__document_id__replace_post: {
         parameters: {
             query?: never;
@@ -793,35 +968,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ReplaceDocumentResponse"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_document_documents__document_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -968,6 +1114,160 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_conversation_conversations__conversation_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_groups_groups_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupResponse"][];
+                };
+            };
+        };
+    };
+    create_group_groups_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_group_groups__group_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_group_groups__group_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

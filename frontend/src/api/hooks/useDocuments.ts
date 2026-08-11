@@ -9,14 +9,14 @@ type DuplicateDocumentResponse = components["schemas"]["DuplicateDocumentRespons
 type ReplaceDocumentResponse = components["schemas"]["ReplaceDocumentResponse"]
 
 // Derives the exact query key openapi-react-query uses for useDocuments(undefined) — the
-// default (unfiltered) course — rather than hardcoding a guessed key, so invalidation can't
+// default (unfiltered) group — rather than hardcoding a guessed key, so invalidation can't
 // silently drift if the library's key shape changes.
 //
 // The empty query:{} makes this a deep-partial PREFIX that matches every documents query
-// regardless of its course filter (TanStack's partialMatchKey iterates the filter's own
+// regardless of its group filter (TanStack's partialMatchKey iterates the filter's own
 // keys, so an empty query object matches any populated one). Do NOT refactor this to a
-// populated filter (e.g. { course: undefined }) — that would stop invalidating
-// course-filtered lists.
+// populated filter (e.g. { group_id: undefined }) — that would stop invalidating
+// group-filtered lists.
 function getDocumentsListKey() {
   return $api.queryOptions("get", "/documents", { params: { query: {} } }).queryKey
 }
@@ -25,15 +25,15 @@ function getDocumentsListKey() {
 export interface UploadDocumentInput {
   file: File
   title?: string
-  course?: string
+  groupId?: string
   tags?: string[]
 }
 
-// Lists documents, optionally scoped to a course. Thin wrapper over openapi-react-query
+// Lists documents, optionally scoped to a group. Thin wrapper over openapi-react-query
 // so callers don't need to know the ("get", "/documents", { params }) call shape.
-export function useDocuments(course?: string): UseQueryResult<DocumentResponse[], unknown> {
+export function useDocuments(groupId?: string): UseQueryResult<DocumentResponse[], unknown> {
   return $api.useQuery("get", "/documents", {
-    params: { query: { course } },
+    params: { query: { group_id: groupId } },
   }, {
     // Keep polling while anything is still processing, so the list flips to
     // ready/failed on its own without the user manually refreshing. No interval
@@ -56,14 +56,14 @@ export function useUploadDocument(): UseMutationResult<DocumentResponse, UploadE
   const documentsListKey = getDocumentsListKey()
 
   return useMutation<DocumentResponse, UploadError, UploadDocumentInput>({
-    mutationFn: async ({ file, title, course, tags }) => {
+    mutationFn: async ({ file, title, groupId, tags }) => {
       // FastAPI's `list[str] = Form()` expects one repeated "tags" field per tag,
       // not a single comma-joined or JSON-encoded value — FormData.append per tag
       // matches that wire format.
       const formData = new FormData()
       formData.append("file", file)
       if (title) formData.append("title", title)
-      if (course) formData.append("course", course)
+      if (groupId) formData.append("group_id", groupId)
       tags?.forEach((tag) => formData.append("tags", tag))
 
       // openapbi-fetch's generated ody type for this operation is the decoded

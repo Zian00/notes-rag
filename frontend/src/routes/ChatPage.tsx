@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { MessageList } from "@/components/chat/MessageList"
 import { ChatInput } from "@/components/chat/ChatInput"
-import { useChat, type ChatMessage } from "@/api/hooks/useChat"
+import { useChat, type ChatMessage, type ChatSendFilters } from "@/api/hooks/useChat"
 import { useConversation } from "@/api/hooks/useConversations"
 
 // Backend message roles are typed as a bare `string` (schema.ts's MessageResponse),
@@ -40,18 +40,35 @@ export function ChatPage() {
   // to bare /chat is a route no-op (already there) — useChat's own route-param
   // reset-guard effect only reacts to an actual conversationId change, so it
   // can't clear a lingering live thread in that case on its own.
-  const newChatNonce = (location.state as { newChatNonce?: string } | null)?.newChatNonce
+  const locationState = location.state as { newChatNonce?: string; groupId?: string } | null
+  const newChatNonce = locationState?.newChatNonce
+  // Sidebar's per-section "New chat" stamps the section's group id alongside the
+  // nonce (see Sidebar.tsx) so the very first send() of this fresh thread can
+  // pre-assign it — kept in a ref (not state) since it's read once by send()
+  // and must not trigger a re-render on its own.
+  const pendingGroupIdRef = useRef<string | undefined>(locationState?.groupId)
   const seenNewChatNonceRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     if (newChatNonce === undefined) return
     if (seenNewChatNonceRef.current === newChatNonce) return
     seenNewChatNonceRef.current = newChatNonce
+    pendingGroupIdRef.current = locationState?.groupId
     reset()
     // A stale seed-guard would otherwise block re-seeding if the user opens
     // the same conversation again later in this mount's lifetime.
     seededConversationIdRef.current = undefined
-  }, [newChatNonce, reset])
+  }, [newChatNonce, locationState?.groupId, reset])
+
+  // Wraps ChatInput's onSend so the pending group id only ever rides along on
+  // the first send() of a fresh thread — it's cleared immediately after use so
+  // a later follow-up in the same conversation can't re-send (and potentially
+  // re-widen) a group scope the backend would ignore anyway past creation.
+  function handleSend(question: string, filters?: ChatSendFilters) {
+    const groupId = pendingGroupIdRef.current
+    pendingGroupIdRef.current = undefined
+    void send(question, groupId ? { ...filters, groupId } : filters)
+  }
 
   useEffect(() => {
     if (!conversationId) return
@@ -95,7 +112,7 @@ export function ChatPage() {
           isLoadingHistory={isLoadingHistory}
         />
       </div>
-      <ChatInput isStreaming={isStreaming} onSend={send} onStop={stop} />
+      <ChatInput isStreaming={isStreaming} onSend={handleSend} onStop={stop} />
     </div>
   )
 }

@@ -18,7 +18,7 @@ const doc1: DocumentResponse = {
   id: "11111111-1111-1111-1111-111111111111",
   filename: "notes1.pdf",
   title: "Notes 1",
-  course: "cs101",
+  group_id: "33333333-3333-3333-3333-333333333333",
   tags: ["week1"],
   content_type: "application/pdf",
   page_count: 3,
@@ -75,7 +75,6 @@ describe("DocumentsPage", () => {
 
     expect(await screen.findByText("Notes 1")).toBeInTheDocument()
     expect(screen.getByText("Notes 2")).toBeInTheDocument()
-    expect(screen.getAllByText("cs101")).toHaveLength(2)
     expect(screen.getAllByText(/10 chunks/i)).toHaveLength(2)
   })
 

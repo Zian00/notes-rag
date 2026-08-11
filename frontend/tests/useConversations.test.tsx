@@ -16,6 +16,7 @@ type ConversationDetail = components["schemas"]["ConversationDetail"]
 const convo1: ConversationResponse = {
   id: "11111111-1111-1111-1111-111111111111",
   title: "First chat",
+  group_id: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }
@@ -23,6 +24,7 @@ const convo1: ConversationResponse = {
 const convo2: ConversationResponse = {
   id: "22222222-2222-2222-2222-222222222222",
   title: null,
+  group_id: null,
   created_at: "2026-01-02T00:00:00Z",
   updated_at: "2026-01-02T00:00:00Z",
 }
