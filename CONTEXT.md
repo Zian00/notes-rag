@@ -19,7 +19,8 @@ _Avoid_: Default group, no group
 
 **Attach** (chat-native upload):
 The chat composer's shortcut action for uploading a document without leaving the chat. It creates
-nothing beyond an ordinary `Document` row tagged with a group — there is no separate attachment
-entity, and no link persists between a chat and the documents attached from it once the composer's
-chip is dismissed.
+an ordinary `Document` row tagged with a group — there is no separate attachment entity. The
+document IDs are persisted on the user-turn message (`attached_document_ids`) so the chat history
+can render what was uploaded on each turn, but this link is purely for display: retrieval still
+uses the group scope, not the per-message attachment list.
 _Avoid_: Attachment (as a stored entity — it isn't one)
