@@ -978,12 +978,13 @@ describe("Chat attach", () => {
 
   it("shows an uploading chip that reflects status, and dismisses without deleting the document", async () => {
     mockAuthed()
+    const processingDoc: DocumentResponse = { ...uploadedDoc, status: "processing" }
     let documentsState: DocumentResponse[] = []
     let deleteWasCalled = false
     server.use(
       http.get(`${API_BASE}/documents`, () => HttpResponse.json(documentsState)),
       http.post(`${API_BASE}/documents`, () => {
-        documentsState = [uploadedDoc]
+        documentsState = [processingDoc]
         return HttpResponse.json(uploadedDoc, { status: 201 })
       }),
       http.delete(`${API_BASE}/documents/${uploadedDoc.id}`, () => {
@@ -999,11 +1000,10 @@ describe("Chat attach", () => {
     await user.upload(fileInput, selectAttachFile())
 
     expect(await screen.findByText("notes.pdf")).toBeInTheDocument()
-    expect(screen.getByText(/processing/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText(/processing/i)).toBeInTheDocument(), {
+      timeout: 4000,
+    })
 
-    // The list now reports it ready — the chip's polled status follows.
-    // (useDocuments polls every 2s while anything is pending/processing, so
-    // this needs longer than the default waitFor timeout to observe.)
     documentsState = [{ ...uploadedDoc, status: "ready" }]
     await waitFor(() => expect(screen.queryByText(/processing/i)).not.toBeInTheDocument(), {
       timeout: 4000,
@@ -1034,11 +1034,12 @@ describe("Chat attach", () => {
 
   it("blocks sending while an attachment is still processing, unblocks when ready", async () => {
     mockAuthed()
+    const processingDoc: DocumentResponse = { ...uploadedDoc, status: "processing" }
     let documentsState: DocumentResponse[] = []
     server.use(
       http.get(`${API_BASE}/documents`, () => HttpResponse.json(documentsState)),
       http.post(`${API_BASE}/documents`, () => {
-        documentsState = [uploadedDoc]
+        documentsState = [processingDoc]
         return HttpResponse.json(uploadedDoc, { status: 201 })
       })
     )
@@ -1052,7 +1053,9 @@ describe("Chat attach", () => {
 
     const textbox = await screen.findByRole("textbox", { name: /message/i })
     await user.type(textbox, "question while attaching")
-    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled()
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled(), {
+      timeout: 4000,
+    })
 
     documentsState = [{ ...uploadedDoc, status: "ready" }]
     await waitFor(
@@ -1210,9 +1213,9 @@ describe("Chat attach", () => {
     const user = userEvent.setup()
     renderApp(["/chat"])
 
-    const fileInput = await screen.findByLabelText(/attach a file/i, {
+    const fileInput = (await screen.findByLabelText(/attach a file/i, {
       selector: "input",
-    }) as HTMLInputElement
+    })) as HTMLInputElement
 
     const files = [
       new File(["a"], "one.pdf", { type: "application/pdf" }),
@@ -1246,12 +1249,13 @@ describe("Chat attach", () => {
     const user = userEvent.setup()
     renderApp(["/chat"])
 
-    const fileInput = await screen.findByLabelText(/attach a file/i, {
+    const fileInput = (await screen.findByLabelText(/attach a file/i, {
       selector: "input",
-    }) as HTMLInputElement
+    })) as HTMLInputElement
 
-    const files = Array.from({ length: 7 }, (_, i) =>
-      new File(["x"], `file${i + 1}.pdf`, { type: "application/pdf" })
+    const files = Array.from(
+      { length: 7 },
+      (_, i) => new File(["x"], `file${i + 1}.pdf`, { type: "application/pdf" })
     )
     await user.upload(fileInput, files)
 

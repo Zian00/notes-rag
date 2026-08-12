@@ -26,9 +26,17 @@ interface ChatInputProps {
   attachGroupId: string | null
 }
 
+// Backend's documented top_k range (see ChatRequest schema) — values outside
+// this are rejected server-side, so out-of-range input is clamped client-side
+// before it's ever sent rather than surfacing a 422 round-trip.
 const TOP_K_MIN = 1
 const TOP_K_MAX = 20
 const MAX_ATTACHMENTS = 5
+
+// Statuses that block the Send button while any attachment is in one of them.
+// "uploading" is a client-only state (POST in flight, no document id yet);
+// "processing" and "failed" come from the backend's DocumentResponse.status.
+const BLOCKING_STATUSES: ReadonlySet<string> = new Set(["uploading", "processing", "failed"])
 
 // Per-file state tracked in the attachments array. A file starts as
 // "uploading" (filename only, no document id yet), transitions to
@@ -39,6 +47,11 @@ interface AttachmentEntry {
   filename: string
   documentId: string | null
   error: string | null
+}
+
+interface ResolvedAttachmentStatus {
+  status: "uploading" | string
+  errorMessage: string | null
 }
 
 export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatInputProps) {
@@ -69,6 +82,15 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
+  // Called when the whole batch has resolved (every file either succeeded or
+  // failed) — opens the group-assignment popover if any uploads succeeded
+  // and the chat is ungrouped.
+  function onBatchSettled(hasAnySuccess: boolean) {
+    if (hasAnySuccess && attachGroupId === null) {
+      setIsGroupPromptOpen(true)
+    }
+  }
+
   function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files
     event.target.value = ""
@@ -77,10 +99,13 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     const remaining = MAX_ATTACHMENTS - attachments.length
     const batch = Array.from(files).slice(0, remaining)
     if (files.length > remaining) {
-      toast.error(`Maximum ${MAX_ATTACHMENTS} files per message. ${files.length - remaining} file(s) skipped.`)
+      toast.error(
+        `Maximum ${MAX_ATTACHMENTS} files per batch. ${files.length - remaining} file(s) skipped.`
+      )
     }
 
-    let pendingSuccessCount = batch.length
+    let pendingCount = batch.length
+    let successCount = 0
 
     for (const file of batch) {
       const key = crypto.randomUUID()
@@ -99,12 +124,9 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
             setAttachments((prev) =>
               prev.map((a) => (a.key === key ? { ...a, documentId: document.id } : a))
             )
-            pendingSuccessCount -= 1
-            // Open the group popover once for the whole batch, after ALL
-            // uploads in the batch have resolved (not per-file).
-            if (pendingSuccessCount === 0 && attachGroupId === null) {
-              setIsGroupPromptOpen(true)
-            }
+            successCount += 1
+            pendingCount -= 1
+            if (pendingCount === 0) onBatchSettled(successCount > 0)
           },
           onError: (error) => {
             const message =
@@ -114,7 +136,8 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
             setAttachments((prev) =>
               prev.map((a) => (a.key === key ? { ...a, error: message } : a))
             )
-            pendingSuccessCount -= 1
+            pendingCount -= 1
+            if (pendingCount === 0) onBatchSettled(successCount > 0)
           },
         }
       )
@@ -122,14 +145,10 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
   }
 
   async function handleGroupPromptChange(groupId: string | null) {
-    const docIds = attachments
-      .filter((a) => a.documentId !== null)
-      .map((a) => a.documentId!)
+    const docIds = attachments.filter((a) => a.documentId !== null).map((a) => a.documentId!)
     try {
       await Promise.all(
-        docIds.map((documentId) =>
-          updateDocumentGroup.mutateAsync({ documentId, groupId })
-        )
+        docIds.map((documentId) => updateDocumentGroup.mutateAsync({ documentId, groupId }))
       )
     } catch {
       toast.error("Failed to update the documents' group.")
@@ -138,24 +157,23 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     }
   }
 
-  // Resolve each attachment's live status from the polled documents list.
-  function getAttachmentStatus(entry: AttachmentEntry): {
-    status: "uploading" | string
-    errorMessage: string | null
-  } {
+  // Resolves an attachment entry's live status from internal error state or
+  // the polled documents list (two distinct sources — the entry carries
+  // client-side upload errors while useDocuments carries backend processing
+  // status).
+  function resolveAttachmentStatus(entry: AttachmentEntry): ResolvedAttachmentStatus {
     if (entry.error !== null) return { status: "failed", errorMessage: entry.error }
     if (entry.documentId === null) return { status: "uploading", errorMessage: null }
     const doc = documentsQuery.data?.find((d) => d.id === entry.documentId)
     return {
-      status: doc?.status ?? "pending",
+      status: doc?.status ?? "ready",
       errorMessage: doc?.error_message ?? null,
     }
   }
 
-  // Send is blocked while any attachment is uploading, processing, or failed.
   const hasBlockingAttachment = attachments.some((a) => {
-    const { status } = getAttachmentStatus(a)
-    return status === "uploading" || status === "pending" || status === "processing" || status === "failed"
+    const { status } = resolveAttachmentStatus(a)
+    return BLOCKING_STATUSES.has(status)
   })
   const canSend = value.trim().length > 0 && !isStreaming && !hasBlockingAttachment
 
@@ -166,6 +184,10 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
     const parsedTopK = topK.trim().length > 0 ? Number(topK) : undefined
+    // Non-integer/NaN input is dropped (falls back to the backend's own default)
+    // rather than sending a value the API would reject; in-range integers are
+    // clamped defensively even though the min/max input attrs already discourage
+    // out-of-range typing.
     const validTopK =
       parsedTopK !== undefined && Number.isInteger(parsedTopK)
         ? Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, parsedTopK))
@@ -184,6 +206,10 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     clearAllAttachments()
   }
 
+  // Enter sends (matches every mainstream chat UI's convention); Shift+Enter
+  // inserts a newline for multi-line questions. isComposing is checked so IME
+  // composition (e.g. typing Japanese/Chinese) confirming via Enter doesn't
+  // prematurely submit the message.
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
@@ -211,10 +237,14 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
 
         {hasAttachments && (
           <Popover open={isGroupPromptOpen} onOpenChange={setIsGroupPromptOpen}>
+            {/* No `asChild` — AttachmentChip is a plain function component that
+                doesn't forward a ref, so PopoverAnchor renders its own wrapping
+                element (needed for Radix's Popper positioning) rather than trying
+                to attach a ref directly to the chip. */}
             <PopoverAnchor className="self-start">
               <div className="flex flex-wrap gap-2" role="list" aria-label="Attached files">
                 {attachments.map((entry) => {
-                  const { status, errorMessage } = getAttachmentStatus(entry)
+                  const { status, errorMessage } = resolveAttachmentStatus(entry)
                   return (
                     <div key={entry.key} role="listitem">
                       <AttachmentChip
