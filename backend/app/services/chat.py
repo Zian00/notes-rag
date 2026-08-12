@@ -242,7 +242,7 @@ class ChatService:
             elif isinstance(m, HumanMessage) and content:
                 msg: dict[str, Any] = {"role": "user", "content": content}
                 attached = m.additional_kwargs.get(ATTACHED_DOCUMENTS_KEY)
-                if attached:
+                if attached is not None:
                     msg["attached_document_ids"] = attached
                 messages.append(msg)
         return {"conversation": convo, "messages": messages}

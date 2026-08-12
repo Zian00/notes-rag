@@ -75,7 +75,7 @@ def new_turn_inputs(
     must not leak into the next.
     """
     kwargs: dict[str, Any] = {}
-    if attached_document_ids:
+    if attached_document_ids is not None:
         kwargs[ATTACHED_DOCUMENTS_KEY] = attached_document_ids
     return {
         "messages": [HumanMessage(question, additional_kwargs=kwargs)],

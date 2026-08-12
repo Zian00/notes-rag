@@ -1,6 +1,5 @@
 import uuid
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,7 +23,7 @@ from app.schemas.document import (
     DuplicateDocumentResponse,
     ReplaceDocumentResponse,
 )
-from app.services.document import DocumentNotFound, DocumentService
+from app.services.document import DocumentNotFound, DocumentService, FileNotFound
 from app.services.group import GroupNotFound
 from app.services.ingestion import DocumentBusy, DuplicateDocument, IngestionService
 from app.utils.files import sanitize_filename, sniff_content_type
@@ -123,18 +122,16 @@ async def list_documents(
 async def download_document(
     document_id: uuid.UUID,
     current_user: User = Depends(get_current_user),  # noqa: B008
-    session: AsyncSession = Depends(get_db),  # noqa: B008
+    document_service: DocumentService = Depends(get_document_service),  # noqa: B008
 ) -> FileResponse:
-    doc = await DocumentRepository(session).get_for_user(document_id, current_user.id)
-    if doc is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    path = Path(doc.storage_path)
-    if not path.is_file():  # noqa: ASYNC240
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found on disk")
+    try:
+        info = await document_service.get_download_info(document_id, current_user.id)
+    except (DocumentNotFound, FileNotFound):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found") from None
     return FileResponse(
-        path=doc.storage_path,
-        media_type=doc.content_type,
-        filename=doc.filename,
+        path=info.storage_path,
+        media_type=info.content_type,
+        filename=info.filename,
     )
 
 
