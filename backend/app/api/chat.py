@@ -40,6 +40,11 @@ async def chat(
         group_id=body.group_id,
         tags=body.tags,
         top_k=body.top_k,
+        attached_document_ids=(
+            [str(did) for did in body.attached_document_ids]
+            if body.attached_document_ids
+            else None
+        ),
     )
     return StreamingResponse(
         stream,

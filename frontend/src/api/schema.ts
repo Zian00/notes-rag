@@ -124,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/documents/{document_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Document */
+        get: operations["download_document_documents__document_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -275,6 +292,11 @@ export interface components {
             file: string;
             /** Group Id */
             group_id?: string | null;
+            /**
+             * Ungroup
+             * @default false
+             */
+            ungroup: boolean;
             /** Tags */
             tags?: string[] | null;
         };
@@ -301,6 +323,8 @@ export interface components {
             tags?: string[] | null;
             /** Top K */
             top_k?: number | null;
+            /** Attached Document Ids */
+            attached_document_ids?: string[] | null;
         };
         /**
          * ChunkMatch
@@ -552,6 +576,8 @@ export interface components {
             content: string;
             /** Citations */
             citations?: components["schemas"]["Citation"][] | null;
+            /** Attached Document Ids */
+            attached_document_ids?: string[] | null;
         };
         /** RegisterRequest */
         RegisterRequest: {
@@ -868,6 +894,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DuplicateDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_document_documents__document_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

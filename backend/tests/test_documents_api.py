@@ -346,6 +346,50 @@ async def test_replace_rejects_group_id_and_ungroup_together(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_download_returns_file_with_correct_content_type(auth_client):
+    content = b"hello world download test"
+    upload = await auth_client.post(
+        "/documents", files={"file": ("notes.txt", content, "text/plain")}
+    )
+    doc_id = upload.json()["id"]
+
+    resp = await auth_client.get(f"/documents/{doc_id}/download")
+    assert resp.status_code == 200
+    assert resp.content == content
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+@pytest.mark.asyncio
+async def test_download_returns_404_for_nonexistent_document(auth_client):
+    resp = await auth_client.get(f"/documents/{uuid.uuid4()}/download")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_returns_404_for_other_users_document(auth_client):
+    upload = await auth_client.post(
+        "/documents", files={"file": ("notes.txt", b"secret stuff", "text/plain")}
+    )
+    doc_id = upload.json()["id"]
+
+    b_email = f"dl-iso-{uuid.uuid4().hex}@example.com"
+    await auth_client.post("/auth/register", json={"email": b_email, "password": "password123"})
+    token_b = (
+        await auth_client.post("/auth/login", json={"email": b_email, "password": "password123"})
+    ).json()["access_token"]
+    auth_client.headers["Authorization"] = f"Bearer {token_b}"
+
+    resp = await auth_client.get(f"/documents/{doc_id}/download")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_requires_auth(client):
+    resp = await client.get(f"/documents/{uuid.uuid4()}/download")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_replace_not_owned_returns_404(auth_client, client):
     files = {"file": ("a.txt", b"owner content for replace", "text/plain")}
     doc_id = (await auth_client.post("/documents", files=files)).json()["id"]

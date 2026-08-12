@@ -1,8 +1,9 @@
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -116,6 +117,25 @@ async def list_documents(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
     docs = await DocumentRepository(session).list_for_user(current_user.id, group_id=group_id)
     return [DocumentResponse.model_validate(d) for d in docs]
+
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_db),  # noqa: B008
+) -> FileResponse:
+    doc = await DocumentRepository(session).get_for_user(document_id, current_user.id)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    path = Path(doc.storage_path)
+    if not path.is_file():  # noqa: ASYNC240
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found on disk")
+    return FileResponse(
+        path=doc.storage_path,
+        media_type=doc.content_type,
+        filename=doc.filename,
+    )
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)

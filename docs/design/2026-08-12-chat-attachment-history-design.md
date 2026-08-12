@@ -62,4 +62,19 @@ in chat history to open the file in a new browser tab.
 
 ## 5. Delivery plan — tickets
 
-TBD — will be split via `/to-tickets` after this doc is committed.
+Published to the issue tracker 2026-08-12, split into tracer-bullet slices per `/to-tickets`.
+
+- **[#14 — T12: File download endpoint](https://github.com/Zian00/notes-rag/issues/14)**
+  *(blocked by: none)*: `GET /documents/{id}/download` — ownership-checked, streams the raw file
+  with correct `Content-Type`.
+- **[#15 — T13: Persist attached document IDs on messages](https://github.com/Zian00/notes-rag/issues/15)**
+  *(blocked by: none)*: new migration + `ChatRequest`/`MessageResponse` field for
+  `attached_document_ids`. Display only — retrieval unchanged.
+- **[#16 — T14: Multi-attach composer](https://github.com/Zian00/notes-rag/issues/16)**
+  *(blocked by: #15)*: multi-select file picker (up to 5), horizontal chip row, batch group
+  popover, send-blocked while busy, chips cleared on send.
+- **[#17 — T15: Attachment cards in message history](https://github.com/Zian00/notes-rag/issues/17)**
+  *(blocked by: #14, #15)*: per-turn cards above user message bubbles, linked to download
+  endpoint, deleted-document graceful degradation.
+
+Frontier: #14 and #15 can both start immediately.

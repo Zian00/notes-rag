@@ -19,7 +19,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.db.repositories.conversation import ConversationRepository
 from app.db.repositories.group import GroupRepository
 from app.db.sentinels import UNSET
-from app.rag.graph.state import CITATIONS_KEY, FINAL_ANSWER_KEY, new_turn_inputs
+from app.rag.graph.state import (
+    ATTACHED_DOCUMENTS_KEY,
+    CITATIONS_KEY,
+    FINAL_ANSWER_KEY,
+    new_turn_inputs,
+)
 from app.services.citations import to_citations
 from app.services.group import GroupNotFound
 
@@ -77,6 +82,7 @@ class ChatService:
         group_id: uuid.UUID | None = None,
         tags: list[str] | None = None,
         top_k: int | None = None,
+        attached_document_ids: list[str] | None = None,
     ) -> AsyncIterator[str]:
         """Async generator yielding SSE frames: meta → token(s) → citations → done.
 
@@ -119,7 +125,7 @@ class ChatService:
         }}
         # Built in state.py, beside the field declarations, so a newly-added derived
         # field cannot be left out of the per-turn reset from over here.
-        inputs: dict[str, Any] = new_turn_inputs(question)
+        inputs: dict[str, Any] = new_turn_inputs(question, attached_document_ids)
 
         streamed_any = False  # becomes True once a token frame is yielded
 
@@ -234,7 +240,11 @@ class ChatService:
                         "citations": m.additional_kwargs.get(CITATIONS_KEY),
                     })
             elif isinstance(m, HumanMessage) and content:
-                messages.append({"role": "user", "content": content})
+                msg: dict[str, Any] = {"role": "user", "content": content}
+                attached = m.additional_kwargs.get(ATTACHED_DOCUMENTS_KEY)
+                if attached:
+                    msg["attached_document_ids"] = attached
+                messages.append(msg)
         return {"conversation": convo, "messages": messages}
 
     async def update_conversation(

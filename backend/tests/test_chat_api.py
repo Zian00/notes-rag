@@ -276,3 +276,60 @@ async def test_chat_user_isolation(
         json={"question": "hi", "conversation_id": convo_id_a},
     )
     assert resp_b.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 5. attached_document_ids persists on user messages and survives history reload
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attached_document_ids_persists_in_history(
+    auth_client: AsyncClient,
+    fake_chat_model,
+    _engine: AsyncEngine,
+) -> None:
+    """attached_document_ids sent with a chat request is persisted on the
+    HumanMessage and surfaced in the conversation detail endpoint."""
+    maker = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+    async with maker() as s:
+        from app.core.security import TokenService
+
+        token = auth_client.headers["Authorization"].split(" ")[1]
+        user_id = TokenService().decode_access_token(token)
+        await _seed_user_doc_chunk(s, user_id)
+
+    doc_id_1 = str(uuid.uuid4())
+    doc_id_2 = str(uuid.uuid4())
+
+    fake_chat_model.responses = [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "retrieve_notes", "args": {"query": "heap"}, "id": "t1"}],
+        ),
+        Grade(relevant=True, reason="ok"),
+        AIMessage("Answer with attachments."),
+    ]
+
+    resp = await auth_client.post(
+        "/chat",
+        json={
+            "question": "what is a heap?",
+            "attached_document_ids": [doc_id_1, doc_id_2],
+        },
+    )
+    assert resp.status_code == 200
+    frames = _parse_sse_frames(resp.text)
+    meta = next(d for e, d in frames if e == "meta")
+    convo_id = meta["conversation_id"]
+
+    detail = await auth_client.get(f"/conversations/{convo_id}")
+    assert detail.status_code == 200
+    messages = detail.json()["messages"]
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert sorted(user_msgs[0]["attached_document_ids"]) == sorted([doc_id_1, doc_id_2])
+
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert all(m.get("attached_document_ids") is None for m in assistant_msgs)

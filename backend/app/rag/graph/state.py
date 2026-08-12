@@ -24,6 +24,12 @@ FINAL_ANSWER_KEY = "notes_rag_final_answer"
 # avoids a second source of truth for message data.
 CITATIONS_KEY = "notes_rag_citations"
 
+# additional_kwargs key on HumanMessage: the document IDs the user attached
+# (uploaded from the chat composer) on this turn. Display-only — retrieval
+# stays group-scoped and never reads this; it exists so replayed history can
+# render "what was uploaded on this turn" as a card above the user's bubble.
+ATTACHED_DOCUMENTS_KEY = "notes_rag_attached_document_ids"
+
 
 class RagState(TypedDict, total=False):
     # Conversation messages. add_messages appends (and deduplicates by id);
@@ -53,7 +59,10 @@ class RagState(TypedDict, total=False):
     needs_notes: bool
 
 
-def new_turn_inputs(question: str) -> dict[str, Any]:
+def new_turn_inputs(
+    question: str,
+    attached_document_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Graph input for one turn: the new message plus a clean slate for the rest.
 
     Lives beside the field declarations, not in the calling service, so that adding a
@@ -65,8 +74,11 @@ def new_turn_inputs(question: str) -> dict[str, Any]:
     add_messages reducer. Everything else describes one turn's retrieval attempt and
     must not leak into the next.
     """
+    kwargs: dict[str, Any] = {}
+    if attached_document_ids:
+        kwargs[ATTACHED_DOCUMENTS_KEY] = attached_document_ids
     return {
-        "messages": [HumanMessage(question)],
+        "messages": [HumanMessage(question, additional_kwargs=kwargs)],
         "question": question,
         "context": [],
         "context_rejected": False,

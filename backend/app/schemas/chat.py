@@ -21,6 +21,10 @@ class ChatRequest(BaseModel):
     group_id: uuid.UUID | None = None
     tags: list[str] | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
+    # Document IDs the user attached (uploaded from the chat composer) on this
+    # turn. Display-only — persisted on the HumanMessage so replayed history can
+    # render "what was uploaded on this turn"; retrieval stays group-scoped.
+    attached_document_ids: list[uuid.UUID] | None = None
 
 
 class Citation(BaseModel):
@@ -68,6 +72,9 @@ class MessageResponse(BaseModel):
     # Assistant turns only, and only for threads answered after citations began being
     # persisted onto the answer message — null everywhere else.
     citations: list[Citation] | None = None
+    # User turns only: document IDs uploaded from the chat composer on this turn.
+    # Null on assistant turns and on user turns made before this field existed.
+    attached_document_ids: list[str] | None = None
 
 
 class ConversationDetail(ConversationResponse):
