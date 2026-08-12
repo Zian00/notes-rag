@@ -64,7 +64,7 @@ export function MessageBubble({ message, isStreamingThisMessage, documents }: Me
         className={cn(
           "flex max-w-[85%] flex-col sm:max-w-[70%]",
           isUser && "items-end",
-          !isUser && "items-start",
+          !isUser && "items-start"
         )}
       >
         {hasAttachments && (

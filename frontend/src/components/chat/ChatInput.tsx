@@ -1,7 +1,6 @@
 import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react"
-import { Paperclip, Send, Square } from "lucide-react"
+import { ArrowUp, Paperclip, Square } from "lucide-react"
 import { toast } from "sonner"
-import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
@@ -200,92 +199,97 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
   const hasAttachments = attachments.length > 0
 
   return (
-    <div className="border-t border-border bg-background px-4 py-3">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-        {hasAttachments && (
-          <Popover open={isGroupPromptOpen} onOpenChange={setIsGroupPromptOpen}>
-            {/* No `asChild` — AttachmentChip is a plain function component that
-                doesn't forward a ref, so PopoverAnchor renders its own wrapping
-                element (needed for Radix's Popper positioning) rather than trying
-                to attach a ref directly to the chip. */}
-            <PopoverAnchor className="self-start">
-              <div className="flex flex-wrap gap-2" role="list" aria-label="Attached files">
-                {attachments.map((entry) => {
-                  const { status, errorMessage } = resolveAttachmentStatus(entry)
-                  return (
-                    <div key={entry.key} role="listitem">
-                      <AttachmentChip
-                        filename={entry.filename}
-                        status={status}
-                        errorMessage={errorMessage}
-                        onDismiss={() => removeAttachment(entry.key)}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-            </PopoverAnchor>
-            <PopoverContent>
-              <GroupSelect
-                label="Add to a group?"
-                value={null}
-                onChange={(groupId) => void handleGroupPromptChange(groupId)}
-                disabled={updateDocumentGroup.isPending}
-              />
-            </PopoverContent>
-          </Popover>
-        )}
+    <div className="px-4 py-3">
+      <div className="mx-auto flex w-full max-w-3xl flex-col">
+        <Label htmlFor={textareaId} className="sr-only">
+          Message
+        </Label>
+        <Label htmlFor={fileInputId} className="sr-only">
+          Attach a file
+        </Label>
+        <input
+          ref={fileInputRef}
+          id={fileInputId}
+          type="file"
+          multiple
+          accept={ACCEPTED_FILE_TYPES}
+          onChange={handleFilesSelected}
+          className="sr-only"
+        />
 
-        <div className="flex items-end gap-2">
-          <Label htmlFor={textareaId} className="sr-only">
-            Message
-          </Label>
-          <Label htmlFor={fileInputId} className="sr-only">
-            Attach a file
-          </Label>
-          <input
-            ref={fileInputRef}
-            id={fileInputId}
-            type="file"
-            multiple
-            accept={ACCEPTED_FILE_TYPES}
-            onChange={handleFilesSelected}
-            className="sr-only"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            aria-label="Attach a file"
-            disabled={attachments.length >= MAX_ATTACHMENTS}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Paperclip className="size-4" aria-hidden="true" />
-          </Button>
-          <Textarea
-            id={textareaId}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask something about your notes…"
-            className="max-h-40 flex-1 resize-none"
-            rows={1}
-          />
-          {isStreaming ? (
-            <Button type="button" variant="outline" size="icon" aria-label="Stop" onClick={onStop}>
-              <Square className="size-4" aria-hidden="true" />
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              size="icon"
-              aria-label="Send"
-              disabled={!canSend}
-              onClick={submit}
-            >
-              <Send className="size-4" aria-hidden="true" />
-            </Button>
+        <div className="rounded-2xl bg-muted px-3 py-2">
+          {hasAttachments && (
+            <Popover open={isGroupPromptOpen} onOpenChange={setIsGroupPromptOpen}>
+              <PopoverAnchor>
+                <div className="mb-2 flex flex-wrap gap-2" role="list" aria-label="Attached files">
+                  {attachments.map((entry) => {
+                    const { status, errorMessage } = resolveAttachmentStatus(entry)
+                    return (
+                      <div key={entry.key} role="listitem">
+                        <AttachmentChip
+                          filename={entry.filename}
+                          status={status}
+                          errorMessage={errorMessage}
+                          onDismiss={() => removeAttachment(entry.key)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </PopoverAnchor>
+              <PopoverContent>
+                <GroupSelect
+                  label="Add to a group?"
+                  value={null}
+                  onChange={(groupId) => void handleGroupPromptChange(groupId)}
+                  disabled={updateDocumentGroup.isPending}
+                />
+              </PopoverContent>
+            </Popover>
           )}
+
+          <div className="flex items-end gap-1.5">
+            <button
+              type="button"
+              aria-label="Attach a file"
+              disabled={attachments.length >= MAX_ATTACHMENTS}
+              onClick={() => fileInputRef.current?.click()}
+              className="mb-0.5 shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              <Paperclip className="size-5" aria-hidden="true" />
+            </button>
+
+            <Textarea
+              id={textareaId}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask something about your notes…"
+              className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent py-0 pl-1.5 pr-0 text-sm leading-6 shadow-none outline-none focus-visible:ring-0 dark:bg-transparent"
+              rows={1}
+            />
+
+            {isStreaming ? (
+              <button
+                type="button"
+                aria-label="Stop"
+                onClick={onStop}
+                className="mb-0.5 shrink-0 rounded-full bg-foreground p-1.5 text-background transition-colors hover:bg-foreground/80"
+              >
+                <Square className="size-3.5" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label="Send"
+                disabled={!canSend}
+                onClick={submit}
+                className="mb-0.5 shrink-0 rounded-full bg-primary p-1.5 text-primary-foreground transition-colors hover:bg-primary/80 disabled:opacity-30"
+              >
+                <ArrowUp className="size-3.5" aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

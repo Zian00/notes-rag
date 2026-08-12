@@ -1350,9 +1350,11 @@ describe("Attachment cards in history", () => {
     renderApp([`/chat/${convo1.id}`])
 
     expect(await screen.findByText("lecture.pdf")).toBeInTheDocument()
-    const link = screen.getByText("lecture.pdf").closest("a")
-    expect(link).toHaveAttribute("href", `/api/documents/${attachedDocId}/download`)
-    expect(link).toHaveAttribute("target", "_blank")
+    // The card is a button (not an <a>) — it uses an authenticated fetch +
+    // blob URL to open the file, since plain navigation doesn't carry the
+    // Authorization header.
+    const card = screen.getByText("lecture.pdf").closest("button")
+    expect(card).toBeInTheDocument()
 
     expect(screen.getByText("Explain this document")).toBeInTheDocument()
     expect(screen.getByText("Here is the explanation.")).toBeInTheDocument()
