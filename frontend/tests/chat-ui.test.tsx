@@ -1014,7 +1014,7 @@ describe("Chat attach", () => {
     expect(deleteWasCalled).toBe(false)
   })
 
-  it("surfaces an upload error immediately without leaving a chip behind", async () => {
+  it("surfaces an upload error as an inline error chip with the filename visible", async () => {
     mockAuthed()
     server.use(
       http.post(`${API_BASE}/documents`, () =>
@@ -1029,21 +1029,18 @@ describe("Chat attach", () => {
     await user.upload(fileInput, selectAttachFile())
 
     expect(await screen.findByText(/too large/i)).toBeInTheDocument()
-    expect(screen.queryByText("notes.pdf")).not.toBeInTheDocument()
+    expect(screen.getByText("notes.pdf")).toBeInTheDocument()
   })
 
-  it("does not block sending a message on the attached document's processing status", async () => {
+  it("blocks sending while an attachment is still processing, unblocks when ready", async () => {
     mockAuthed()
+    let documentsState: DocumentResponse[] = []
     server.use(
-      http.get(`${API_BASE}/documents`, () => HttpResponse.json([uploadedDoc])),
-      http.post(`${API_BASE}/documents`, () => HttpResponse.json(uploadedDoc, { status: 201 }))
-    )
-    mockStreamChat.mockImplementation(
-      scriptedStream([
-        { event: "meta", data: { conversation_id: "convo-new" } },
-        { event: "token", data: { delta: "ok" } },
-        { event: "done", data: {} },
-      ])
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json(documentsState)),
+      http.post(`${API_BASE}/documents`, () => {
+        documentsState = [uploadedDoc]
+        return HttpResponse.json(uploadedDoc, { status: 201 })
+      })
     )
 
     const user = userEvent.setup()
@@ -1052,15 +1049,16 @@ describe("Chat attach", () => {
     const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
     await user.upload(fileInput, selectAttachFile())
     await screen.findByText("notes.pdf")
-    expect(screen.getByText(/processing/i)).toBeInTheDocument()
 
     const textbox = await screen.findByRole("textbox", { name: /message/i })
     await user.type(textbox, "question while attaching")
-    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled()
 
-    expect(await screen.findByText("question while attaching")).toBeInTheDocument()
-    // Still processing — sending didn't wait for the attachment to finish.
-    expect(screen.getByText(/processing/i)).toBeInTheDocument()
+    documentsState = [{ ...uploadedDoc, status: "ready" }]
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: /^send$/i })).not.toBeDisabled(),
+      { timeout: 4000 }
+    )
   })
 
   it("attaching in a grouped chat uploads straight into it, with no group-assignment popover", async () => {
@@ -1191,5 +1189,143 @@ describe("Chat attach", () => {
 
     await user.upload(fileInput, selectAttachFile("second.pdf"))
     expect(await screen.findByText(/add to a group/i)).toBeInTheDocument()
+  })
+
+  it("supports multi-file attach (up to 5), rendering a chip per file", async () => {
+    mockAuthed()
+    let uploadCount = 0
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        const file = form.get("file") as File
+        uploadCount += 1
+        return HttpResponse.json(
+          { ...uploadedDoc, id: crypto.randomUUID(), filename: file.name },
+          { status: 201 }
+        )
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, {
+      selector: "input",
+    }) as HTMLInputElement
+
+    const files = [
+      new File(["a"], "one.pdf", { type: "application/pdf" }),
+      new File(["b"], "two.pdf", { type: "application/pdf" }),
+      new File(["c"], "three.pdf", { type: "application/pdf" }),
+    ]
+    await user.upload(fileInput, files)
+
+    expect(await screen.findByText("one.pdf")).toBeInTheDocument()
+    expect(screen.getByText("two.pdf")).toBeInTheDocument()
+    expect(screen.getByText("three.pdf")).toBeInTheDocument()
+    await waitFor(() => expect(uploadCount).toBe(3))
+  })
+
+  it("rejects files beyond the 5-file cap with a toast", async () => {
+    mockAuthed()
+    let uploadCount = 0
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/documents`, async ({ request }) => {
+        const form = await request.formData()
+        const file = form.get("file") as File
+        uploadCount += 1
+        return HttpResponse.json(
+          { ...uploadedDoc, id: crypto.randomUUID(), filename: file.name },
+          { status: 201 }
+        )
+      })
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, {
+      selector: "input",
+    }) as HTMLInputElement
+
+    const files = Array.from({ length: 7 }, (_, i) =>
+      new File(["x"], `file${i + 1}.pdf`, { type: "application/pdf" })
+    )
+    await user.upload(fileInput, files)
+
+    await waitFor(() => expect(uploadCount).toBe(5))
+    expect(await screen.findByText(/skipped/i)).toBeInTheDocument()
+  })
+
+  it("blocks send while a failed attachment chip is present, unblocks after dismissing it", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([])),
+      http.post(`${API_BASE}/documents`, () =>
+        HttpResponse.json({ detail: "File too large" }, { status: 413 })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+
+    await screen.findByText(/too large/i)
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "question")
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled()
+
+    await user.click(screen.getByRole("button", { name: /remove attached file/i }))
+    expect(screen.getByRole("button", { name: /^send$/i })).not.toBeDisabled()
+  })
+
+  it("clears all chips from the composer after sending and passes attached_document_ids", async () => {
+    mockAuthed()
+    const readyDoc: DocumentResponse = { ...uploadedDoc, status: "ready" }
+    server.use(
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([readyDoc])),
+      http.post(`${API_BASE}/documents`, () => HttpResponse.json(readyDoc, { status: 201 }))
+    )
+    mockStreamChat.mockImplementation(
+      scriptedStream([
+        { event: "meta", data: { conversation_id: "convo-new" } },
+        { event: "token", data: { delta: "ok" } },
+        { event: "done", data: {} },
+      ])
+    )
+
+    const user = userEvent.setup()
+    renderApp(["/chat"])
+
+    const fileInput = await screen.findByLabelText(/attach a file/i, { selector: "input" })
+    await user.upload(fileInput, selectAttachFile())
+    await screen.findByText("notes.pdf")
+
+    // Wait for the document to be "ready" so send unblocks. useDocuments
+    // polls every 2s while anything is pending/processing — needs generous
+    // timeout to observe the status flip.
+    const textbox = await screen.findByRole("textbox", { name: /message/i })
+    await user.type(textbox, "question with attachment")
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: /^send$/i })).not.toBeDisabled(),
+      { timeout: 8000 }
+    )
+
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    expect(await screen.findByText("question with attachment")).toBeInTheDocument()
+    // Chips should be cleared from the composer after send.
+    expect(screen.queryByText("notes.pdf")).not.toBeInTheDocument()
+    // streamChat was called with attached_document_ids.
+    expect(mockStreamChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attached_document_ids: [readyDoc.id],
+      }),
+      expect.anything()
+    )
   })
 })

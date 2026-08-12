@@ -23,19 +23,23 @@ interface ChatInputProps {
   isStreaming: boolean
   onSend: (question: string, filters?: ChatSendFilters) => void
   onStop: () => void
-  // The chat's current group (existing conversation's group_id, or a
-  // not-yet-sent new chat's pending group) — an attach uploads straight
-  // into this group with no prompt, including when it's null/ungrouped.
-  // When null, a successful attach opens the group-assignment popover below
-  // (T10b) instead of staying silently ungrouped.
   attachGroupId: string | null
 }
 
-// Backend's documented top_k range (see ChatRequest schema) — values outside
-// this are rejected server-side, so out-of-range input is clamped client-side
-// before it's ever sent rather than surfacing a 422 round-trip.
 const TOP_K_MIN = 1
 const TOP_K_MAX = 20
+const MAX_ATTACHMENTS = 5
+
+// Per-file state tracked in the attachments array. A file starts as
+// "uploading" (filename only, no document id yet), transitions to
+// "attached" on upload success (has a document id, status polled from
+// useDocuments), or "error" on upload failure.
+interface AttachmentEntry {
+  key: string
+  filename: string
+  documentId: string | null
+  error: string | null
+}
 
 export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatInputProps) {
   const [value, setValue] = useState("")
@@ -48,77 +52,112 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
   const topKId = useId()
   const fileInputId = useId()
 
-  // Attach state: `uploadingFilename` covers the initial POST (no document
-  // id exists yet), `attachedDocumentId` covers everything after — its live
-  // status is read from useDocuments()'s already-polling list rather than a
-  // second dedicated status hook (see design doc §4.2's "implementation
-  // detail for the ticket" note).
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [uploadingFilename, setUploadingFilename] = useState<string | null>(null)
-  const [attachedDocumentId, setAttachedDocumentId] = useState<string | null>(null)
-  // Open only when the chat is ungrouped and an attach just succeeded — reset
-  // per-attach in handleFileSelected, not persisted, so it re-appears on every
-  // subsequent attach while the chat stays ungrouped (T10b's explicit "no
-  // don't-ask-again state" requirement).
+  const [attachments, setAttachments] = useState<AttachmentEntry[]>([])
   const [isGroupPromptOpen, setIsGroupPromptOpen] = useState(false)
   const uploadDocument = useUploadDocument()
   const updateDocumentGroup = useUpdateDocumentMetadata()
   const documentsQuery = useDocuments()
-  const attachedDocument = documentsQuery.data?.find((doc) => doc.id === attachedDocumentId)
 
-  function clearAttachment() {
-    setUploadingFilename(null)
-    setAttachedDocumentId(null)
+  function removeAttachment(key: string) {
+    setAttachments((prev) => prev.filter((a) => a.key !== key))
+  }
+
+  function clearAllAttachments() {
+    setAttachments([])
     setIsGroupPromptOpen(false)
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
-  function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Cleared immediately (not after upload resolves) so picking the exact
-    // same file again later still fires a change event.
+  function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files
     event.target.value = ""
-    if (!file) return
+    if (!files || files.length === 0) return
 
-    setAttachedDocumentId(null)
-    setIsGroupPromptOpen(false)
-    setUploadingFilename(file.name)
-    uploadDocument.mutate(
-      { file, groupId: attachGroupId ?? undefined },
-      {
-        onSuccess: (document) => {
-          setUploadingFilename(null)
-          setAttachedDocumentId(document.id)
-          // Uploaded ungrouped (per #11's default) — offer to assign a group
-          // now, rather than leaving it silently ungrouped. A chat that
-          // already has a group skips this entirely (see #11's regression
-          // check).
-          if (attachGroupId === null) setIsGroupPromptOpen(true)
-        },
-        onError: (error) => {
-          setUploadingFilename(null)
-          toast.error(
-            error instanceof UploadError
-              ? messageForUploadError(error)
-              : "Upload failed. Please try again."
-          )
-        },
+    const remaining = MAX_ATTACHMENTS - attachments.length
+    const batch = Array.from(files).slice(0, remaining)
+    if (files.length > remaining) {
+      toast.error(`Maximum ${MAX_ATTACHMENTS} files per message. ${files.length - remaining} file(s) skipped.`)
+    }
+
+    let pendingSuccessCount = batch.length
+
+    for (const file of batch) {
+      const key = crypto.randomUUID()
+      const entry: AttachmentEntry = {
+        key,
+        filename: file.name,
+        documentId: null,
+        error: null,
       }
-    )
+      setAttachments((prev) => [...prev, entry])
+
+      uploadDocument.mutate(
+        { file, groupId: attachGroupId ?? undefined },
+        {
+          onSuccess: (document) => {
+            setAttachments((prev) =>
+              prev.map((a) => (a.key === key ? { ...a, documentId: document.id } : a))
+            )
+            pendingSuccessCount -= 1
+            // Open the group popover once for the whole batch, after ALL
+            // uploads in the batch have resolved (not per-file).
+            if (pendingSuccessCount === 0 && attachGroupId === null) {
+              setIsGroupPromptOpen(true)
+            }
+          },
+          onError: (error) => {
+            const message =
+              error instanceof UploadError
+                ? messageForUploadError(error)
+                : "Upload failed. Please try again."
+            setAttachments((prev) =>
+              prev.map((a) => (a.key === key ? { ...a, error: message } : a))
+            )
+            pendingSuccessCount -= 1
+          },
+        }
+      )
+    }
   }
 
   async function handleGroupPromptChange(groupId: string | null) {
-    if (!attachedDocumentId) return
+    const docIds = attachments
+      .filter((a) => a.documentId !== null)
+      .map((a) => a.documentId!)
     try {
-      await updateDocumentGroup.mutateAsync({ documentId: attachedDocumentId, groupId })
+      await Promise.all(
+        docIds.map((documentId) =>
+          updateDocumentGroup.mutateAsync({ documentId, groupId })
+        )
+      )
     } catch {
-      toast.error("Failed to update the document's group.")
+      toast.error("Failed to update the documents' group.")
     } finally {
       setIsGroupPromptOpen(false)
     }
   }
 
-  const canSend = value.trim().length > 0 && !isStreaming
+  // Resolve each attachment's live status from the polled documents list.
+  function getAttachmentStatus(entry: AttachmentEntry): {
+    status: "uploading" | string
+    errorMessage: string | null
+  } {
+    if (entry.error !== null) return { status: "failed", errorMessage: entry.error }
+    if (entry.documentId === null) return { status: "uploading", errorMessage: null }
+    const doc = documentsQuery.data?.find((d) => d.id === entry.documentId)
+    return {
+      status: doc?.status ?? "pending",
+      errorMessage: doc?.error_message ?? null,
+    }
+  }
+
+  // Send is blocked while any attachment is uploading, processing, or failed.
+  const hasBlockingAttachment = attachments.some((a) => {
+    const { status } = getAttachmentStatus(a)
+    return status === "uploading" || status === "pending" || status === "processing" || status === "failed"
+  })
+  const canSend = value.trim().length > 0 && !isStreaming && !hasBlockingAttachment
 
   function submit() {
     if (!canSend) return
@@ -127,32 +166,32 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
     const parsedTopK = topK.trim().length > 0 ? Number(topK) : undefined
-    // Non-integer/NaN input is dropped (falls back to the backend's own default)
-    // rather than sending a value the API would reject; in-range integers are
-    // clamped defensively even though the `min`/`max` input attrs already
-    // discourage out-of-range typing.
     const validTopK =
       parsedTopK !== undefined && Number.isInteger(parsedTopK)
         ? Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, parsedTopK))
         : undefined
 
+    const attachedDocumentIds = attachments
+      .filter((a) => a.documentId !== null)
+      .map((a) => a.documentId!)
+
     onSend(value, {
       tags: parsedTags.length > 0 ? parsedTags : undefined,
       topK: validTopK,
+      attachedDocumentIds: attachedDocumentIds.length > 0 ? attachedDocumentIds : undefined,
     })
     setValue("")
+    clearAllAttachments()
   }
 
-  // Enter sends (matches every mainstream chat UI's convention); Shift+Enter
-  // inserts a newline for multi-line questions. isComposing is checked so IME
-  // composition (e.g. typing Japanese/Chinese) confirming via Enter doesn't
-  // prematurely submit the message.
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
       submit()
     }
   }
+
+  const hasAttachments = attachments.length > 0
 
   return (
     <div className="border-t border-border bg-background px-4 py-3">
@@ -170,19 +209,24 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
           Filters
         </button>
 
-        {(uploadingFilename || attachedDocument) && (
+        {hasAttachments && (
           <Popover open={isGroupPromptOpen} onOpenChange={setIsGroupPromptOpen}>
-            {/* No `asChild` — AttachmentChip is a plain function component that
-                doesn't forward a ref, so PopoverAnchor renders its own wrapping
-                element here (needed for Radix's Popper positioning) rather than
-                trying to attach a ref directly to the chip. */}
             <PopoverAnchor className="self-start">
-              <AttachmentChip
-                filename={uploadingFilename ?? attachedDocument?.filename ?? ""}
-                status={uploadingFilename ? "uploading" : (attachedDocument?.status ?? "pending")}
-                errorMessage={attachedDocument?.error_message}
-                onDismiss={clearAttachment}
-              />
+              <div className="flex flex-wrap gap-2" role="list" aria-label="Attached files">
+                {attachments.map((entry) => {
+                  const { status, errorMessage } = getAttachmentStatus(entry)
+                  return (
+                    <div key={entry.key} role="listitem">
+                      <AttachmentChip
+                        filename={entry.filename}
+                        status={status}
+                        errorMessage={errorMessage}
+                        onDismiss={() => removeAttachment(entry.key)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
             </PopoverAnchor>
             <PopoverContent>
               <GroupSelect
@@ -232,9 +276,9 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
             ref={fileInputRef}
             id={fileInputId}
             type="file"
+            multiple
             accept={ACCEPTED_FILE_TYPES}
-            onChange={handleFileSelected}
-            disabled={uploadDocument.isPending}
+            onChange={handleFilesSelected}
             className="sr-only"
           />
           <Button
@@ -242,7 +286,7 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
             variant="outline"
             size="icon"
             aria-label="Attach a file"
-            disabled={uploadDocument.isPending}
+            disabled={attachments.length >= MAX_ATTACHMENTS}
             onClick={() => fileInputRef.current?.click()}
           >
             <Paperclip className="size-4" aria-hidden="true" />

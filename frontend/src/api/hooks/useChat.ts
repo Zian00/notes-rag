@@ -21,6 +21,9 @@ export interface ChatSendFilters {
   // ChatRequest.group_id server-side) — pre-assigns the chat to a sidebar group
   // section. Ignored on every later turn of that same conversation.
   groupId?: string
+  // Document IDs attached (uploaded from the composer) on this turn — display
+  // only, persisted on the user message so history can render them as cards.
+  attachedDocumentIds?: string[]
 }
 
 export interface UseChatOptions {
@@ -219,6 +222,7 @@ export function useChat(options?: UseChatOptions): UseChatResult {
             group_id: isNewChat ? filters?.groupId : undefined,
             tags: filters?.tags,
             top_k: filters?.topK,
+            attached_document_ids: filters?.attachedDocumentIds,
           },
           controller.signal
         )
