@@ -12,6 +12,7 @@ export interface ChatMessage {
   content: string
   citations?: Citation[]
   error?: boolean // true if this assistant turn ended in an error frame / stream failure
+  attachedDocumentIds?: string[]
 }
 
 export interface ChatSendFilters {
@@ -146,7 +147,12 @@ export function useChat(options?: UseChatOptions): UseChatResult {
 
       const isNewChat = activeConversationIdRef.current === undefined
 
-      const userMessage: ChatMessage = { id: generateMessageId(), role: "user", content: trimmed }
+      const userMessage: ChatMessage = {
+        id: generateMessageId(),
+        role: "user",
+        content: trimmed,
+        attachedDocumentIds: filters?.attachedDocumentIds,
+      }
       const assistantMessageId = generateMessageId()
       const assistantPlaceholder: ChatMessage = {
         id: assistantMessageId,

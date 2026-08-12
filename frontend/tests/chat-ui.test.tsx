@@ -1322,8 +1322,10 @@ describe("Chat attach", () => {
     await user.click(screen.getByRole("button", { name: /^send$/i }))
 
     expect(await screen.findByText("question with attachment")).toBeInTheDocument()
-    // Chips should be cleared from the composer after send.
-    expect(screen.queryByText("notes.pdf")).not.toBeInTheDocument()
+    // Composer chips (with dismiss buttons) should be cleared after send —
+    // the filename may still appear as an attachment card in the history, but
+    // the dismiss button is unique to the composer chip.
+    expect(screen.queryByRole("button", { name: /remove attached file/i })).not.toBeInTheDocument()
     // streamChat was called with attached_document_ids.
     expect(mockStreamChat).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1331,5 +1333,87 @@ describe("Chat attach", () => {
       }),
       expect.anything()
     )
+  })
+})
+
+describe("Attachment cards in history", () => {
+  const attachedDocId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  const attachedDoc: DocumentResponse = {
+    id: attachedDocId,
+    filename: "lecture.pdf",
+    title: null,
+    group_id: null,
+    tags: [],
+    content_type: "application/pdf",
+    page_count: null,
+    chunk_count: 0,
+    status: "ready",
+    error_message: null,
+    file_size: 1024,
+    embedding_model: "test-model",
+    embedding_dimension: 384,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+
+  const convoWithAttachment: ConversationDetail = {
+    ...convo1,
+    messages: [
+      {
+        role: "user",
+        content: "Explain this document",
+        attached_document_ids: [attachedDocId],
+      },
+      { role: "assistant", content: "Here is the explanation." },
+    ],
+  }
+
+  it("renders an attachment card above a user message that carried attachments", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () =>
+        HttpResponse.json(convoWithAttachment)
+      ),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([attachedDoc]))
+    )
+
+    renderApp([`/chat/${convo1.id}`])
+
+    expect(await screen.findByText("lecture.pdf")).toBeInTheDocument()
+    const link = screen.getByText("lecture.pdf").closest("a")
+    expect(link).toHaveAttribute("href", `/api/documents/${attachedDocId}/download`)
+    expect(link).toHaveAttribute("target", "_blank")
+
+    expect(screen.getByText("Explain this document")).toBeInTheDocument()
+    expect(screen.getByText("Here is the explanation.")).toBeInTheDocument()
+  })
+
+  it("shows a deleted-document card when the document no longer exists", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () =>
+        HttpResponse.json(convoWithAttachment)
+      ),
+      http.get(`${API_BASE}/documents`, () => HttpResponse.json([]))
+    )
+
+    renderApp([`/chat/${convo1.id}`])
+
+    expect(await screen.findByText("(deleted)")).toBeInTheDocument()
+    const deletedCard = screen.getByText("(deleted)").closest("span")
+    expect(deletedCard?.querySelector("a")).toBeNull()
+  })
+
+  it("renders no attachment cards for messages without attached_document_ids", async () => {
+    mockAuthed()
+    server.use(
+      http.get(`${API_BASE}/conversations/${convo1.id}`, () => HttpResponse.json(convo1Detail))
+    )
+
+    renderApp([`/chat/${convo1.id}`])
+
+    expect(await screen.findByText("What is a hash map?")).toBeInTheDocument()
+    expect(screen.queryByText("lecture.pdf")).not.toBeInTheDocument()
+    expect(screen.queryByText("(deleted)")).not.toBeInTheDocument()
   })
 })

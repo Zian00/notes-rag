@@ -90,6 +90,7 @@ export function ChatPage() {
           // Null for conversations answered before citations began being persisted
           // onto the answer message — those sources were never stored.
           citations: message.citations ?? undefined,
+          attachedDocumentIds: message.attached_document_ids ?? undefined,
         }))
     )
     seededConversationIdRef.current = conversationId

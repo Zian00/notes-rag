@@ -2,6 +2,7 @@ import { useCallback, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
+import { AttachmentCard } from "@/components/chat/AttachmentCard"
 import { Citations } from "@/components/chat/Citations"
 import { StreamingCursor } from "@/components/chat/StreamingCursor"
 import { ThinkingIndicator } from "@/components/chat/ThinkingIndicator"
@@ -48,16 +49,26 @@ export function MessageBubble({ message, isStreamingThisMessage }: MessageBubble
 
   const markdownComponents = useMarkdownComponents(handleCitationClick)
 
+  const hasAttachments = isUser && message.attachedDocumentIds && message.attachedDocumentIds.length > 0
+
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm sm:max-w-[70%]",
-          isUser && "bg-primary text-primary-foreground",
-          !isUser && !message.error && "bg-muted text-foreground",
-          !isUser && message.error && "bg-destructive/10 text-destructive"
+      <div className={cn("flex flex-col", isUser && "items-end", !isUser && "items-start")}>
+        {hasAttachments && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {message.attachedDocumentIds!.map((docId) => (
+              <AttachmentCard key={docId} documentId={docId} />
+            ))}
+          </div>
         )}
-      >
+        <div
+          className={cn(
+            "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm sm:max-w-[70%]",
+            isUser && "bg-primary text-primary-foreground",
+            !isUser && !message.error && "bg-muted text-foreground",
+            !isUser && message.error && "bg-destructive/10 text-destructive"
+          )}
+        >
         {renderAsMarkdown ? (
           <div className="flex flex-col gap-2 wrap-anywhere">
             {/* Nothing to parse yet (waiting for the first token) — show the
@@ -98,6 +109,7 @@ export function MessageBubble({ message, isStreamingThisMessage }: MessageBubble
             idPrefix={message.id}
           />
         )}
+        </div>
       </div>
     </div>
   )
