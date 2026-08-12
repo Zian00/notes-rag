@@ -61,7 +61,11 @@ export function MessageBubble({ message, isStreamingThisMessage, documents }: Me
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
       <div
-        className={cn("flex max-w-full flex-col", isUser && "items-end", !isUser && "items-start")}
+        className={cn(
+          "flex max-w-[85%] flex-col sm:max-w-[70%]",
+          isUser && "items-end",
+          !isUser && "items-start",
+        )}
       >
         {hasAttachments && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -81,7 +85,7 @@ export function MessageBubble({ message, isStreamingThisMessage, documents }: Me
         )}
         <div
           className={cn(
-            "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm sm:max-w-[70%]",
+            "rounded-2xl px-4 py-2.5 text-sm",
             isUser && "bg-primary text-primary-foreground",
             !isUser && !message.error && "bg-muted text-foreground",
             !isUser && message.error && "bg-destructive/10 text-destructive"
