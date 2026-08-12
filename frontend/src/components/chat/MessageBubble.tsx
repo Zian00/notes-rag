@@ -60,7 +60,9 @@ export function MessageBubble({ message, isStreamingThisMessage, documents }: Me
 
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
-      <div className={cn("flex flex-col", isUser && "items-end", !isUser && "items-start")}>
+      <div
+        className={cn("flex max-w-full flex-col", isUser && "items-end", !isUser && "items-start")}
+      >
         {hasAttachments && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {message.attachedDocumentIds!.map((docId) => {

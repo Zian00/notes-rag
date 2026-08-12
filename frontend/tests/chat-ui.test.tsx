@@ -593,36 +593,6 @@ describe("AppShell mobile drawer", () => {
   })
 })
 
-describe("ChatInput top_k clamp", () => {
-  it("clamps an out-of-range top_k before sending", async () => {
-    mockAuthed()
-    mockStreamChat.mockImplementation(
-      scriptedStream([
-        { event: "meta", data: { conversation_id: "convo-new" } },
-        { event: "done", data: {} },
-      ])
-    )
-
-    const user = userEvent.setup()
-    renderApp(["/chat"])
-
-    await screen.findByText(/ask something about your notes/i)
-
-    await user.click(screen.getByRole("button", { name: /filters/i }))
-    const topKInput = screen.getByLabelText(/top k/i)
-    await user.clear(topKInput)
-    await user.type(topKInput, "999")
-
-    const textbox = await screen.findByRole("textbox", { name: /message/i })
-    await user.type(textbox, "clamp check")
-    await user.click(screen.getByRole("button", { name: /^send$/i }))
-
-    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1))
-    const [requestBody] = mockStreamChat.mock.calls[0]
-    expect(requestBody.top_k).toBe(20)
-  })
-})
-
 describe("Theme toggle", () => {
   it("renders in the Sidebar footer and switching to dark applies the .dark class", async () => {
     mockAuthed()

@@ -51,7 +51,9 @@ export function MessageList({ messages, isStreaming, isLoadingHistory }: Message
         <MessageBubble
           key={message.id}
           message={message}
-          isStreamingThisMessage={isStreaming && message.role === "assistant" && message.id === lastMessageId}
+          isStreamingThisMessage={
+            isStreaming && message.role === "assistant" && message.id === lastMessageId
+          }
           documents={documentsQuery.data}
         />
       ))}
