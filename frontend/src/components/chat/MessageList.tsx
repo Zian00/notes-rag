@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { MessageSquare } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MessageBubble } from "@/components/chat/MessageBubble"
+import { useDocuments } from "@/api/hooks/useDocuments"
 import type { ChatMessage } from "@/api/hooks/useChat"
 
 interface MessageListProps {
@@ -11,6 +12,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, isStreaming, isLoadingHistory }: MessageListProps) {
+  const documentsQuery = useDocuments()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll to the newest content as tokens stream in. Deliberately simple
@@ -50,6 +52,7 @@ export function MessageList({ messages, isStreaming, isLoadingHistory }: Message
           key={message.id}
           message={message}
           isStreamingThisMessage={isStreaming && message.role === "assistant" && message.id === lastMessageId}
+          documents={documentsQuery.data}
         />
       ))}
       <div ref={bottomRef} />

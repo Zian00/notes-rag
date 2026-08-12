@@ -165,8 +165,12 @@ export function ChatInput({ isStreaming, onSend, onStop, attachGroupId }: ChatIn
     if (entry.error !== null) return { status: "failed", errorMessage: entry.error }
     if (entry.documentId === null) return { status: "uploading", errorMessage: null }
     const doc = documentsQuery.data?.find((d) => d.id === entry.documentId)
+    // Falls back to "processing" (a blocking status) when the document hasn't
+    // appeared in the polled list yet — the upload POST returned a document id
+    // but useDocuments hasn't refetched. Defaulting to "ready" here would
+    // prematurely unblock Send before the backend confirms the document is done.
     return {
-      status: doc?.status ?? "ready",
+      status: doc?.status ?? "processing",
       errorMessage: doc?.error_message ?? null,
     }
   }

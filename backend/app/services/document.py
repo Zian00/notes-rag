@@ -7,6 +7,7 @@ the repositories underneath stay pure CRUD.
 
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,11 +60,12 @@ class DocumentService:
         """Return the file path + metadata needed for a download response.
 
         Raises DocumentNotFound / FileNotFound."""
-        from pathlib import Path
-
         doc = await self._documents.get_for_user(document_id, user_id)
         if doc is None:
             raise DocumentNotFound(str(document_id))
+        # Sync stat() on local disk — sub-ms for a single path, not worth an
+        # async wrapper in a single-user app. FileResponse itself does the same
+        # sync I/O internally anyway.
         if not Path(doc.storage_path).is_file():  # noqa: ASYNC240
             raise FileNotFound(str(document_id))
         return DownloadInfo(
