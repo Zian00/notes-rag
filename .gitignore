@@ -36,3 +36,6 @@ env/
 .worktrees/
 bash.exe.stackdump
 firebase-debug.log
+
+# SSH keys
+*.pem
