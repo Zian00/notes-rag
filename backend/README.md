@@ -108,8 +108,7 @@ app/
 ```mermaid
 ---
 config:
-  theme: base
-  look: neo
+  theme: default
 ---
 flowchart TB
  subgraph condense_step["1. Condense"]
